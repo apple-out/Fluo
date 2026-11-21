@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Fluo Official Project Page (4 Languages)
+    url: https://apple-out.github.io/transratebrowser/
+    about: Download guides, hardware matrix, and multilingual documentation.
+  - name: Open Beta Releases
+    url: https://github.com/apple-out/transratebrowser/releases
+    about: Download the latest Windows portable package.

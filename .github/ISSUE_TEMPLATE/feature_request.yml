@@ -1,0 +1,12 @@
+name: Feature & UX Suggestion / 기능 · 개선 제안 / 機能要望 / 功能建议
+description: Suggest improvements to browser chrome, translation UX, workspaces, or sync.
+title: "[UX] "
+labels: ["enhancement", "open-beta"]
+body:
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Idea or UX Friction / 제안 내용
+      description: Describe what workflow feels slow or what capability would help most.
+    validations:
+      required: true

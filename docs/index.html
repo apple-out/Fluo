@@ -1,0 +1,1226 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fluo — Browse in flow. Translate on-device.</title>
+  <meta name="description" content="Fluo is a lightweight Windows WebView2 browser with Apache 2.0 on-device AI inline translation (Hy-MT2 / llama.cpp Vulkan), first-run 4-language setup, and Windows DPAPI privacy." />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <style>
+    :root {
+      --bg: #070b14;
+      --bg-elev: rgba(15, 22, 38, 0.68);
+      --bg-card: rgba(18, 27, 47, 0.62);
+      --bg-pill: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.12);
+      --border-strong: rgba(124, 156, 255, 0.34);
+      --text: #eef3ff;
+      --muted: #9eb0d0;
+      --accent: #5b8cff;
+      --accent-2: #8b5cf6;
+      --accent-3: #14b8a6;
+      --code-bg: rgba(91, 140, 255, 0.16);
+      --shadow: 0 24px 64px rgba(2, 6, 20, 0.55);
+      --radius: 22px;
+      --transition: 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    html[data-theme="light"] {
+      --bg: #f3f6fd;
+      --bg-elev: rgba(255, 255, 255, 0.78);
+      --bg-card: rgba(255, 255, 255, 0.72);
+      --bg-pill: rgba(15, 23, 42, 0.05);
+      --border: rgba(15, 23, 42, 0.1);
+      --border-strong: rgba(59, 108, 255, 0.32);
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #315efb;
+      --accent-2: #7c3aed;
+      --accent-3: #0d9488;
+      --code-bg: rgba(49, 94, 251, 0.1);
+      --shadow: 0 18px 48px rgba(15, 23, 42, 0.09);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", "Hiragino Sans", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Aurora mesh background matching liquid glass f icon */
+    .aurora {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .aurora::before,
+    .aurora::after {
+      content: "";
+      position: absolute;
+      width: 68vmax;
+      height: 68vmax;
+      border-radius: 50%;
+      filter: blur(110px);
+      opacity: 0.32;
+      animation: drift 22s ease-in-out infinite alternate;
+    }
+    .aurora::before {
+      top: -22vmax;
+      left: -14vmax;
+      background: radial-gradient(circle, #3b82f6 0%, #7c3aed 48%, transparent 72%);
+    }
+    .aurora::after {
+      bottom: -24vmax;
+      right: -12vmax;
+      background: radial-gradient(circle, #06b6d4 0%, #4f46e5 52%, transparent 72%);
+      animation-delay: -10s;
+    }
+    @keyframes drift {
+      from { transform: translate3d(0, 0, 0) scale(1); }
+      to { transform: translate3d(5vw, 4vh, 0) scale(1.08); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .aurora::before, .aurora::after { animation: none; }
+    }
+
+    a { color: inherit; }
+    .wrap {
+      width: min(1140px, calc(100% - 32px));
+      margin: 0 auto;
+    }
+
+    /* Sticky glass navbar */
+    .nav {
+      position: sticky;
+      top: 12px;
+      z-index: 40;
+      margin: 12px auto 0;
+      width: min(1140px, calc(100% - 24px));
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      -webkit-backdrop-filter: blur(22px) saturate(160%);
+      backdrop-filter: blur(22px) saturate(160%);
+      box-shadow: var(--shadow);
+    }
+    .nav-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 8px 14px;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      font-weight: 800;
+      font-size: 16px;
+      letter-spacing: -0.02em;
+    }
+    .brand img {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .nav-links a {
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      padding: 6px 11px;
+      border-radius: 999px;
+      transition: background var(--transition), color var(--transition);
+    }
+    .nav-links a:hover {
+      background: var(--bg-pill);
+      color: var(--text);
+    }
+    .nav-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .lang-group {
+      display: inline-flex;
+      padding: 3px;
+      border-radius: 999px;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      gap: 2px;
+    }
+    .lang-btn, .icon-btn {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .lang-btn:hover, .icon-btn:hover { color: var(--text); }
+    .lang-btn.active {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      box-shadow: 0 6px 16px rgba(79, 70, 229, 0.35);
+    }
+    .icon-btn {
+      border: 1px solid var(--border);
+      background: var(--bg-pill);
+      padding: 6px 11px;
+    }
+    .nav-gh {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 13px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 700;
+      text-decoration: none;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      transition: border-color var(--transition), transform var(--transition);
+    }
+    .nav-gh:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
+
+    @media (max-width: 860px) {
+      .nav-links { display: none; }
+    }
+
+    /* Hero */
+    .hero {
+      padding: 64px 0 40px;
+      text-align: center;
+    }
+    .hero-icon {
+      width: 96px;
+      height: 96px;
+      border-radius: 26px;
+      box-shadow: 0 22px 54px rgba(79, 70, 229, 0.42);
+      margin-bottom: 18px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 14px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--text);
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      margin-bottom: 16px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-3);
+      box-shadow: 0 0 12px var(--accent-3);
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2.15rem, 5vw, 3.7rem);
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+    }
+    .gradient-text {
+      background: linear-gradient(135deg, #60a5fa 0%, #818cf8 48%, #c084fc 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    html[data-theme="light"] .gradient-text {
+      background: linear-gradient(135deg, #2563eb 0%, #6d28d9 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+    }
+    .hero-local {
+      margin: 10px auto 0;
+      font-size: clamp(1.05rem, 2.2vw, 1.35rem);
+      font-weight: 700;
+      color: var(--text);
+    }
+    .hero-desc {
+      margin: 14px auto 0;
+      max-width: 680px;
+      font-size: 15.5px;
+      color: var(--muted);
+    }
+    .cta-row {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 26px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 22px;
+      border-radius: 999px;
+      font-size: 14.5px;
+      font-weight: 700;
+      text-decoration: none;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      -webkit-backdrop-filter: blur(18px);
+      backdrop-filter: blur(18px);
+      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+    }
+    .btn:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-strong);
+    }
+    .btn-primary {
+      border-color: transparent;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 14px 32px rgba(79, 70, 229, 0.36);
+    }
+    .badges {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 22px;
+    }
+    .badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 999px;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+
+    /* Section framing */
+    section { padding: 42px 0; }
+    .sec-head {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+    .sec-head h2 {
+      margin: 0;
+      font-size: clamp(1.4rem, 2.8vw, 1.95rem);
+      letter-spacing: -0.025em;
+    }
+    .sec-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14.5px;
+      max-width: 680px;
+    }
+
+    /* Glass panel */
+    .glass {
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      -webkit-backdrop-filter: blur(22px) saturate(150%);
+      backdrop-filter: blur(22px) saturate(150%);
+      box-shadow: var(--shadow);
+    }
+
+    /* Interactive Browser Demo */
+    .demo-shell { overflow: hidden; }
+    .demo-chrome {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-pill);
+      flex-wrap: wrap;
+    }
+    .demo-url {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 220px;
+      padding: 7px 13px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      font-size: 12.5px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    .demo-tabs {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .demo-tab {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 6px 13px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .demo-tab.active {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+    }
+    .demo-body {
+      padding: 24px 26px;
+      display: grid;
+      gap: 14px;
+    }
+    .demo-article h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+    .demo-article p {
+      margin: 0 0 12px;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+    .demo-article a.fake-link {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      font-weight: 600;
+    }
+    .demo-article code {
+      padding: 2px 7px;
+      border-radius: 7px;
+      background: var(--code-bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9em;
+    }
+    .demo-bilingual {
+      border-left: 3px solid var(--accent);
+      padding-left: 14px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .demo-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+    .hover-pills {
+      display: inline-flex;
+      gap: 6px;
+    }
+    .hover-pill {
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-pill);
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    /* Interactive Hardware Matrix */
+    .hw-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    @media (max-width: 880px) {
+      .hw-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 520px) {
+      .hw-grid { grid-template-columns: 1fr; }
+    }
+    .hw-card {
+      text-align: left;
+      padding: 16px;
+      border-radius: 18px;
+      border: 1.5px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+      transition: transform var(--transition), border-color var(--transition), box-shadow var(--transition);
+    }
+    .hw-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--border-strong);
+    }
+    .hw-card.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.22);
+    }
+    .hw-vendor {
+      font-size: 11.5px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--accent);
+    }
+    .hw-card strong {
+      display: block;
+      margin-top: 4px;
+      font-size: 15px;
+    }
+    .hw-card small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+    .hw-detail {
+      padding: 20px 22px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+    @media (max-width: 720px) {
+      .hw-detail { grid-template-columns: 1fr; }
+    }
+    .hw-stat label {
+      display: block;
+      font-size: 11.5px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+    .hw-stat div {
+      font-size: 14.5px;
+      font-weight: 700;
+    }
+
+    /* Feature Bento Grid */
+    .bento {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 900px) {
+      .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 600px) {
+      .bento { grid-template-columns: 1fr; }
+    }
+    .feat-card {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .feat-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+    }
+    .feat-card h3 {
+      margin: 4px 0 0;
+      font-size: 16px;
+      letter-spacing: -0.015em;
+    }
+    .feat-card p {
+      margin: 0;
+      font-size: 13.5px;
+      color: var(--muted);
+    }
+
+    /* Quick Start & Legal */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    @media (max-width: 780px) {
+      .steps { grid-template-columns: 1fr; }
+    }
+    .step-card { padding: 20px; }
+    .step-num {
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      margin-bottom: 10px;
+    }
+    .step-card h3 { margin: 0 0 6px; font-size: 15.5px; }
+    .step-card p { margin: 0; font-size: 13.5px; color: var(--muted); }
+
+    .trust-strip {
+      margin-top: 22px;
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .trust-links {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .pill-link {
+      text-decoration: none;
+      font-size: 12.5px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--bg-pill);
+      border: 1px solid var(--border);
+      transition: border-color var(--transition);
+    }
+    .pill-link:hover { border-color: var(--border-strong); }
+
+    footer {
+      padding: 28px 0 44px;
+      border-top: 1px solid var(--border);
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .foot-inner {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    button:focus-visible, a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="aurora" aria-hidden="true"></div>
+
+  <header class="nav">
+    <div class="nav-inner">
+      <a class="brand" href="#top">
+        <img src="icon.png" alt="Fluo icon" />
+        <span>Fluo</span>
+      </a>
+      <nav class="nav-links" aria-label="Section navigation">
+        <a href="#demo" data-i18n="nav.demo">Live Demo</a>
+        <a href="#hardware" data-i18n="nav.hardware">Hardware</a>
+        <a href="#features" data-i18n="nav.features">Features</a>
+        <a href="#quickstart" data-i18n="nav.quickstart">Quick Start</a>
+      </nav>
+      <div class="nav-controls">
+        <div class="lang-group" role="group" aria-label="Language switcher">
+          <button type="button" class="lang-btn" data-lang="ko">한국어</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+          <button type="button" class="lang-btn" data-lang="ja">日本語</button>
+          <button type="button" class="lang-btn" data-lang="zh-CN">简体</button>
+        </div>
+        <button type="button" class="icon-btn" id="themeBtn" aria-label="Toggle color theme">☀ / ☾</button>
+        <a class="nav-gh" href="https://github.com/apple-out/transratebrowser" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main id="top" class="wrap">
+    <section class="hero">
+      <img src="icon.png" alt="Fluo liquid glass logo" class="hero-icon" />
+      <div>
+        <span class="eyebrow"><span class="dot"></span><span data-i18n="hero.badge">v0.1.0 Open Beta · Windows 10/11 x64</span></span>
+      </div>
+      <h1><span class="gradient-text">Fluo</span> — Browse in flow. Translate on-device.</h1>
+      <p class="hero-local" data-i18n="hero.localLine"></p>
+      <p class="hero-desc" data-i18n="hero.desc"></p>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/apple-out/transratebrowser/releases" target="_blank" rel="noopener" data-i18n="hero.ctaDownload">Download Windows Open Beta</a>
+        <a class="btn" href="https://github.com/apple-out/transratebrowser/issues/new/choose" target="_blank" rel="noopener" data-i18n="hero.ctaIssue">Report Bug / Translation Error</a>
+        <a class="btn" href="https://github.com/apple-out/transratebrowser" target="_blank" rel="noopener" data-i18n="hero.ctaSource">View Source on GitHub</a>
+      </div>
+
+      <div class="badges">
+        <span class="badge" data-i18n="badge.ondevice">Apache 2.0 On-Device Hy-MT2</span>
+        <span class="badge" data-i18n="badge.hw">Vulkan GPU + Universal x64 CPU</span>
+        <span class="badge" data-i18n="badge.lang">4-Language Instant UI</span>
+        <span class="badge" data-i18n="badge.dpapi">Windows DPAPI Vault · No Telemetry</span>
+      </div>
+    </section>
+
+    <section id="demo">
+      <div class="sec-head">
+        <div>
+          <h2 data-i18n="demo.title">Layout-Preserving Inline Translation</h2>
+          <p data-i18n="demo.subtitle"></p>
+        </div>
+      </div>
+      <div class="glass demo-shell">
+        <div class="demo-chrome">
+          <div class="demo-url"><span>https://</span><span>developer.valvesoftware.com/wiki/Source_SDK</span></div>
+          <div class="demo-tabs" role="tablist" aria-label="Preview mode">
+            <button type="button" class="demo-tab" data-mode="original" data-i18n="demo.tabOrig">Original</button>
+            <button type="button" class="demo-tab active" data-mode="inline" data-i18n="demo.tabInline">Fluo Inline</button>
+            <button type="button" class="demo-tab" data-mode="bilingual" data-i18n="demo.tabBi">Bilingual</button>
+          </div>
+        </div>
+        <div class="demo-body demo-article" id="demoContent"></div>
+        <div class="demo-foot">
+          <span data-i18n="demo.footHint">Hover any translated paragraph inside Fluo for quick inline actions:</span>
+          <div class="hover-pills">
+            <span class="hover-pill">↻ <span data-i18n="demo.pillRetranslate">Retranslate</span></span>
+            <span class="hover-pill">✎ <span data-i18n="demo.pillEdit">Edit</span></span>
+            <span class="hover-pill">⚑ <span data-i18n="demo.pillReport">Report Mistranslation</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="hardware">
+      <div class="sec-head">
+        <div>
+          <h2 data-i18n="hw.title">Runs on Any CPU + GPU Combination</h2>
+          <p data-i18n="hw.subtitle"></p>
+        </div>
+      </div>
+      <div class="hw-grid" role="tablist" aria-label="Hardware presets">
+        <button type="button" class="hw-card active" data-hw="nvidia">
+          <span class="hw-vendor">NVIDIA</span>
+          <strong>GeForce RTX / GTX</strong>
+          <small data-i18n="hw.nvSub">Dedicated Vulkan VRAM</small>
+        </button>
+        <button type="button" class="hw-card" data-hw="amd">
+          <span class="hw-vendor">AMD</span>
+          <strong>Radeon RX / Ryzen APU</strong>
+          <small data-i18n="hw.amdSub">Full GPU or Hybrid Layer Split</small>
+        </button>
+        <button type="button" class="hw-card" data-hw="intel">
+          <span class="hw-vendor">Intel</span>
+          <strong>Arc / Iris Xe / UHD</strong>
+          <small data-i18n="hw.intelSub">Shared & Dedicated Vulkan</small>
+        </button>
+        <button type="button" class="hw-card" data-hw="cpu">
+          <span class="hw-vendor">x64 CPU</span>
+          <strong>CPU-Only / Thin & Light</strong>
+          <small data-i18n="hw.cpuSub">AVX-512 → AVX2 → AVX → SSE4.2</small>
+        </button>
+      </div>
+      <div class="glass hw-detail" id="hwDetail"></div>
+    </section>
+
+    <section id="features">
+      <div class="sec-head">
+        <div>
+          <h2 data-i18n="feat.title">Built for Flow, Speed & Privacy</h2>
+          <p data-i18n="feat.subtitle"></p>
+        </div>
+      </div>
+      <div class="bento">
+        <article class="glass feat-card">
+          <div class="feat-icon">⚡</div>
+          <h3 data-i18n="f1.title"></h3>
+          <p data-i18n="f1.desc"></p>
+        </article>
+        <article class="glass feat-card">
+          <div class="feat-icon">🎯</div>
+          <h3 data-i18n="f2.title"></h3>
+          <p data-i18n="f2.desc"></p>
+        </article>
+        <article class="glass feat-card">
+          <div class="feat-icon">🌐</div>
+          <h3 data-i18n="f3.title"></h3>
+          <p data-i18n="f3.desc"></p>
+        </article>
+        <article class="glass feat-card">
+          <div class="feat-icon">🗂️</div>
+          <h3 data-i18n="f4.title"></h3>
+          <p data-i18n="f4.desc"></p>
+        </article>
+        <article class="glass feat-card">
+          <div class="feat-icon">🛡️</div>
+          <h3 data-i18n="f5.title"></h3>
+          <p data-i18n="f5.desc"></p>
+        </article>
+        <article class="glass feat-card">
+          <div class="feat-icon">🐞</div>
+          <h3 data-i18n="f6.title"></h3>
+          <p data-i18n="f6.desc"></p>
+        </article>
+      </div>
+    </section>
+
+    <section id="quickstart">
+      <div class="sec-head">
+        <div>
+          <h2 data-i18n="qs.title">Open Beta Quick Start (Windows x64)</h2>
+          <p data-i18n="qs.subtitle"></p>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="glass step-card">
+          <span class="step-num">1</span>
+          <h3 data-i18n="qs1.title"></h3>
+          <p data-i18n="qs1.desc"></p>
+        </div>
+        <div class="glass step-card">
+          <span class="step-num">2</span>
+          <h3 data-i18n="qs2.title"></h3>
+          <p data-i18n="qs2.desc"></p>
+        </div>
+        <div class="glass step-card">
+          <span class="step-num">3</span>
+          <h3 data-i18n="qs3.title"></h3>
+          <p data-i18n="qs3.desc"></p>
+        </div>
+      </div>
+
+      <div class="glass trust-strip">
+        <div>
+          <strong data-i18n="trust.title">Open-Source License & Policy Transparency</strong>
+          <div style="font-size:13px;color:var(--muted)" data-i18n="trust.desc"></div>
+        </div>
+        <div class="trust-links">
+          <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/LICENSE" target="_blank" rel="noopener">MIT LICENSE</a>
+          <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/TERMS_OF_USE.md" target="_blank" rel="noopener">TERMS_OF_USE.md</a>
+          <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/THIRD_PARTY_LICENSES.md" target="_blank" rel="noopener">THIRD_PARTY_LICENSES.md</a>
+          <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/SECURITY.md" target="_blank" rel="noopener">SECURITY.md</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <div class="foot-inner">
+      <div><strong>Fluo</strong> — <em>Browse in flow. Translate on-device.</em> · MIT License</div>
+      <div class="trust-links">
+        <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/README.md" target="_blank" rel="noopener">English README</a>
+        <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/README.ko.md" target="_blank" rel="noopener">한국어 README</a>
+        <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/README.ja.md" target="_blank" rel="noopener">日本語 README</a>
+        <a class="pill-link" href="https://github.com/apple-out/transratebrowser/blob/main/README.zh-CN.md" target="_blank" rel="noopener">简体中文 README</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const COPY = {
+      ko: {
+        title: "Fluo — 막힘없는 흐름으로 탐색하고, 기기에서 즉시 번역하다",
+        "nav.demo": "인라인 체험",
+        "nav.hardware": "하드웨어 최적화",
+        "nav.features": "핵심 기능",
+        "nav.quickstart": "빠른 시작",
+        "hero.badge": "v0.1.0 오픈 베타 · Windows 10/11 x64",
+        "hero.localLine": "막힘없는 흐름으로 탐색하고, 기기에서 즉시 번역하다.",
+        "hero.desc": "에스페란토로 ‘흐름 · 유창함’을 뜻하는 Fluo는 Windows 네이티브 WebView2 위에 Apache 2.0 온디바이스 GGUF 추론(Hy-MT2 · llama.cpp Vulkan)을 결합한 경량 인라인 번역 브라우저입니다.",
+        "hero.ctaDownload": "Windows 오픈 베타 다운로드",
+        "hero.ctaIssue": "버그 · 번역 오류 제보",
+        "hero.ctaSource": "GitHub 소스 보기",
+        "badge.ondevice": "Apache 2.0 온디바이스 Hy-MT2",
+        "badge.hw": "Vulkan GPU + 범용 x64 CPU",
+        "badge.lang": "4개국어 UI 즉시 전환",
+        "badge.dpapi": "Windows DPAPI 금고 · 텔레메트리 없음",
+        "demo.title": "레이아웃을 깨뜨리지 않는 인라인 번역",
+        "demo.subtitle": "하이퍼링크, 인라인 코드, 위키 문법을 그대로 유지한 채 문단 자리에 번역을 자연스럽게 렌더링합니다.",
+        "demo.tabOrig": "원문 (Original)",
+        "demo.tabInline": "Fluo 인라인",
+        "demo.tabBi": "원문 + 번역 동시 보기",
+        "demo.footHint": "Fluo 앱 안에서 번역된 문단에 마우스를 올리면 즉시 재번역·수정·오역 제보가 가능합니다:",
+        "demo.pillRetranslate": "재번역",
+        "demo.pillEdit": "직접 수정",
+        "demo.pillReport": "오역 제보",
+        "hw.title": "어떤 CPU + GPU 조합에서도 동작하는 범용 엔진",
+        "hw.subtitle": "GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS 구조로 실행 환경의 GPU VRAM과 CPU 명령어를 자동 판별해 최적의 Apache 2.0 Hy-MT2 모델을 매칭합니다.",
+        "hw.nvSub": "외장 VRAM 자동 풀 오프로드",
+        "hw.amdSub": "외장 GPU / 내장 APU 하이브리드 분할",
+        "hw.intelSub": "전용 · 공유 메모리 Vulkan 가속",
+        "hw.cpuSub": "AVX-512 → AVX2 → AVX → SSE4.2 자동 선택",
+        "feat.title": "읽기 흐름과 보안에 집중한 설계",
+        "feat.subtitle": "API 과금 없는 완전 오프라인 번역부터 클라우드 API 선택 연결, 작업공간, 안전 동기화까지 한 곳에 담았습니다.",
+        "f1.title": "오프라인 Hy-MT2 (Apache 2.0)",
+        "f1.desc": "상업적 이용까지 자유로운 Apache 2.0 GGUF 모델을 1클릭으로 다운로드해 외부 서버 전송 없이 내 PC에서 즉시 번역합니다.",
+        "f2.title": "영역 선택 · 호버 즉시 편집",
+        "f2.desc": "원하는 영역만 클릭해 번역하는 Region Picker, 원문·번역 동시 보기, 드래그 번역, 정규식 용어집까지 모두 내장되어 있습니다.",
+        "f3.title": "첫 실행 4개국어 선택 & 실시간 전환",
+        "f3.desc": "처음 실행 시 한국어 · English · 日本語 · 简体中文 선택 창만 깔끔하게 띄우며, 메뉴와 설정에서 언제든 즉시 바꿀 수 있습니다.",
+        "f4.title": "프리징 없는 작업공간 & 절전 탭",
+        "f4.desc": "작업공간 생성·전환 시 브라우저 멈춤 없이 부드럽게 전환되며, 유휴 탭 자동 절전으로 RAM 점유율을 낮춥니다.",
+        "f5.title": "Windows DPAPI 금고 & 병합 동기화",
+        "f5.desc": "API 키, OAuth 토큰, 로그인 정보는 Windows DPAPI로 로컬에만 암호화되고 Google Drive · OneDrive 폴더 동기화 시 절대 유출되지 않습니다.",
+        "f6.title": "일일 제한 없는 GitHub Issues 피드백",
+        "f6.desc": "100통 제한이나 개발자 이메일 노출 없이 앱에서 클릭 한 번으로 진단 정보가 정리된 GitHub Issue나 Cloudflare 릴레이를 통해 제보하세요.",
+        "qs.title": "오픈 베타 빠른 시작 (Windows 10/11 x64)",
+        "qs.subtitle": "별도의 CUDA Toolkit이나 Python 환경 설정 없이 포터블 압축 해제만으로 바로 시작할 수 있습니다.",
+        "qs1.title": "포터블 ZIP 다운로드 및 폴더째 해제",
+        "qs1.desc": "GitHub Releases에서 Fluo-v0.1.0-win64.zip을 내려받아 원하는 폴더에 압축을 풉니다 (동봉 DLL을 Fluo.exe와 같은 폴더에 유지하세요).",
+        "qs2.title": "UI 언어 선택 및 권장 모델 받기",
+        "qs2.desc": "Fluo.exe 첫 실행 시 4개국어 선택 창에서 언어를 고른 뒤, 상단 [번역 ▾] → 권장 Apache 2.0 Hy-MT2 모델을 클릭해 내려받습니다.",
+        "qs3.title": "클라우드 API 선택 연결 (BYOK)",
+        "qs3.desc": "원하면 [설정 → AI 및 모델]에서 Google Gemini, OpenAI 공식·호환 API 또는 선택적 OpenAI 레거시 OAuth를 연결해 사용할 수 있습니다.",
+        "trust.title": "투명한 오픈소스 라이선스 · 이용 약관",
+        "trust.desc": "MIT 라이선스, Apache 2.0 Hy-MT2 모델 정책, 선택적 OpenAI 레거시(codexLegacy) 연결 관련 이용 약관을 명확히 공개합니다.",
+      },
+      en: {
+        title: "Fluo — Browse in flow. Translate on-device.",
+        "nav.demo": "Live Demo",
+        "nav.hardware": "Hardware",
+        "nav.features": "Features",
+        "nav.quickstart": "Quick Start",
+        "hero.badge": "v0.1.0 Open Beta · Windows 10/11 x64",
+        "hero.localLine": "Uninterrupted browsing with instant on-device translation.",
+        "hero.desc": "Named after Esperanto for 'flow / fluency', Fluo pairs Windows-native WebView2 with quantized Apache 2.0 on-device GGUF translation (Hy-MT2 via llama.cpp + Vulkan) and optional cloud connectors.",
+        "hero.ctaDownload": "Download Windows Open Beta",
+        "hero.ctaIssue": "Report Bug / Translation Error",
+        "hero.ctaSource": "View Source on GitHub",
+        "badge.ondevice": "Apache 2.0 On-Device Hy-MT2",
+        "badge.hw": "Vulkan GPU + Universal x64 CPU",
+        "badge.lang": "4-Language Instant UI",
+        "badge.dpapi": "Windows DPAPI Vault · Zero Telemetry",
+        "demo.title": "Layout-Preserving Inline Translation",
+        "demo.subtitle": "Keep hyperlinks, inline code spans, and structured page layouts completely intact while reading seamlessly in your language.",
+        "demo.tabOrig": "Original",
+        "demo.tabInline": "Fluo Inline",
+        "demo.tabBi": "Bilingual",
+        "demo.footHint": "Hover any translated paragraph inside Fluo for instant inline controls:",
+        "demo.pillRetranslate": "Retranslate",
+        "demo.pillEdit": "Edit",
+        "demo.pillReport": "Report Issue",
+        "hw.title": "Runs on Any CPU + GPU Combination",
+        "hw.subtitle": "Powered by GGML_BACKEND_DL and universal CPU variants, Fluo detects your Vulkan GPU VRAM and x64 instruction sets at launch to pair the best Apache 2.0 Hy-MT2 tier.",
+        "hw.nvSub": "Full Dedicated Vulkan VRAM",
+        "hw.amdSub": "Discrete GPU or Hybrid APU Split",
+        "hw.intelSub": "Dedicated & Shared Vulkan Compute",
+        "hw.cpuSub": "AVX-512 → AVX2 → AVX → SSE4.2 Auto-Dispatch",
+        "feat.title": "Built for Flow, Speed & Privacy",
+        "feat.subtitle": "Everything needed for offline long-form reading, structured technical wikis, and open beta collaboration.",
+        "f1.title": "Offline Hy-MT2 Engine (Apache 2.0)",
+        "f1.desc": "Download commercially permissive Apache 2.0 GGUF models in one click — zero per-token fees and zero page content sent to external servers.",
+        "f2.title": "Region Picker & Hover Inline Editor",
+        "f2.desc": "Click specific sections on long pages to translate in focus, switch original/bilingual modes instantly, and apply regex glossaries.",
+        "f3.title": "First-Run 4-Language Picker",
+        "f3.desc": "Opens directly to a crisp 4-language selector on initial launch (한국어 / English / 日本語 / 简体中文) with instant switching anytime in Menu or Settings.",
+        "f4.title": "Non-Blocking Workspaces & Sleep Tabs",
+        "f4.desc": "Create, switch, rename, and organize workspaces smoothly without freezing WebView panes while automatically sleeping idle background tabs.",
+        "f5.title": "Windows DPAPI Vault & Safe Sync",
+        "f5.desc": "API keys, OAuth tokens, and logins stay encrypted locally via Windows DPAPI and are strictly excluded from Google Drive / OneDrive / folder sync.",
+        "f6.title": "Unlimited GitHub Issues Feedback",
+        "f6.desc": "Submit sanitized diagnostics and mistranslation reports straight to GitHub Issues (or self-hosted Cloudflare Workers) with zero exposed maintainer emails.",
+        "qs.title": "Open Beta Quick Start (Windows 10/11 x64)",
+        "qs.subtitle": "Portable distribution — no Python, CUDA Toolkit, or admin installer required.",
+        "qs1.title": "Download & Extract Portable ZIP",
+        "qs1.desc": "Grab Fluo-v0.1.0-win64.zip from GitHub Releases and extract the entire folder together so Fluo.exe can load its bundled llama/ggml/MSVC DLLs.",
+        "qs2.title": "Pick Language & Download Recommended Model",
+        "qs2.desc": "Select your UI & target language on first launch, then click [Translate ▾] → Download Recommended Model (Hy-MT2-1.8B, Apache 2.0) for offline translation.",
+        "qs3.title": "Optional Cloud BYOK & Terms Transparency",
+        "qs3.desc": "Optionally connect Google Gemini, OpenAI-compatible APIs, or OpenAI Legacy OAuth in Settings → AI & Models (all credentials stay DPAPI-encrypted locally).",
+        "trust.title": "Open-Source License & Terms Transparency",
+        "trust.desc": "MIT source code, Apache 2.0 Hy-MT2 models, Windows security policy, and explicit notice for optional OpenAI Legacy (codexLegacy) OAuth connections.",
+      },
+      ja: {
+        title: "Fluo — 途切れない流れで閲覧し、デバイス上で瞬時に翻訳",
+        "nav.demo": "インライン体験",
+        "nav.hardware": "ハードウェア最適化",
+        "nav.features": "主な特徴",
+        "nav.quickstart": "クイックスタート",
+        "hero.badge": "v0.1.0 オープンベータ · Windows 10/11 x64",
+        "hero.localLine": "途切れない流れで閲覧し、デバイス上で瞬時に翻訳。",
+        "hero.desc": "エスペラント語で「流れ・流暢さ」を意味する Fluo は、Windows ネイティブ WebView2 に Apache 2.0 オンデバイス GGUF 翻訳（Hy-MT2 / llama.cpp + Vulkan）を統合した高速ブラウザです。",
+        "hero.ctaDownload": "Windows オープンベータを入手",
+        "hero.ctaIssue": "バグ・誤訳を報告",
+        "hero.ctaSource": "GitHub ソースを見る",
+        "badge.ondevice": "Apache 2.0 オンデバイス Hy-MT2",
+        "badge.hw": "Vulkan GPU + ユニバーサル x64 CPU",
+        "badge.lang": "4言語 UI 即時切替",
+        "badge.dpapi": "Windows DPAPI 金庫 · 遠隔収集なし",
+        "demo.title": "レイアウトを崩さないインライン翻訳",
+        "demo.subtitle": "ハイパーリンクやインラインコード、見出し構造を維持したまま段落ごとに自然な訳文を埋め込みます。",
+        "demo.tabOrig": "原文 (Original)",
+        "demo.tabInline": "Fluo インライン",
+        "demo.tabBi": "並列表示 (Bilingual)",
+        "demo.footHint": "Fluo 内で翻訳済み段落にマウスを乗せると、再翻訳・編集・誤訳報告をすぐ呼び出せます:",
+        "demo.pillRetranslate": "再翻訳",
+        "demo.pillEdit": "直接編集",
+        "demo.pillReport": "誤訳報告",
+        "hw.title": "あらゆる CPU + GPU 環境に自動適応",
+        "hw.subtitle": "GGML_BACKEND_DL と全命令セット CPU バックエンドを同梱し、起動時に最適な Vulkan GPU / ハイブリッド / CPU 構成と Apache 2.0 Hy-MT2 モデルを自動選択します。",
+        "hw.nvSub": "専用 VRAM によるフル GPU 推論",
+        "hw.amdSub": "単体 GPU / Ryzen iGPU ハイブリッド分割",
+        "hw.intelSub": "専用・共有メモリ Vulkan アクセラレーション",
+        "hw.cpuSub": "AVX-512 → AVX2 → AVX → SSE4.2 自動判別",
+        "feat.title": "快適な長文読書とプライバシーを両立",
+        "feat.subtitle": "完全オフライン翻訳からクラウド API 連携、フリーズしないワークスペース、安全な同期まで網羅しています。",
+        "f1.title": "オフライン Hy-MT2 (Apache 2.0)",
+        "f1.desc": "商用利用も可能な Apache 2.0 GGUF モデルをワンクリックで取得し、API 料金不要・外部送信ゼロでローカル翻訳できます。",
+        "f2.title": "領域選択翻訳＆ホバー編集バー",
+        "f2.desc": "長文記事の読みたい区画だけをクリック翻訳する Region Picker、並列比較表示、正規表現対応の用語集を搭載しています。",
+        "f3.title": "初回起動 4言語選択＆即時切替",
+        "f3.desc": "初回起動時はシンプルな 4言語（한국어 / English / 日本語 / 简体中文）ピッカーのみを表示し、設定やメニューからいつでも切り替え可能です。",
+        "f4.title": "非同期ワークスペース＆スリープタブ",
+        "f4.desc": "ワークスペース切替や作成で画面が固まることなく動作し、非アクティブタブの自動スリープでメモリ消費を抑えます。",
+        "f5.title": "Windows DPAPI 暗号化＆安全な同期",
+        "f5.desc": "API キーや OAuth トークン、保存パスワードは Windows DPAPI でローカル暗号化され、クラウドフォルダー同期ファイルには一切含まれません。",
+        "f6.title": "上限なしの GitHub Issues 報告",
+        "f6.desc": "開発者メールアドレスを公開せず、アプリ内のワンクリック操作で機密除去済みの診断レポート付き Issue や Cloudflare リレー送信が可能です。",
+        "qs.title": "オープンベータ クイックスタート (Windows x64)",
+        "qs.subtitle": "CUDA Toolkit や Python の導入は不要。ポータブル ZIP を展開するだけですぐ使えます。",
+        "qs1.title": "ポータブル ZIP をフォルダーごと展開",
+        "qs1.desc": "GitHub Releases から Fluo-v0.1.0-win64.zip をダウンロードし、同梱 DLL と同じフォルダーに展開して Fluo.exe を起動します。",
+        "qs2.title": "言語選択＆推奨モデルのダウンロード",
+        "qs2.desc": "起動時の言語ピッカーで UI 言語を選び、ツールバーの「翻訳 ▾」→ 推奨 Apache 2.0 Hy-MT2 モデルを取得するとオフライン翻訳が始まります。",
+        "qs3.title": "クラウド API 連携 (任意)",
+        "qs3.desc": "必要に応じて「設定 → AI・モデル」から Google Gemini・OpenAI 互換 API・任意の OpenAI レガシー OAuth を接続できます。",
+        "trust.title": "オープンソースライセンス・利用規約の公開",
+        "trust.desc": "MIT ライセンス、Apache 2.0 モデル方針、および任意の OpenAI レガシー OAuth (codexLegacy) に関する利用規約を明記しています。",
+      },
+      "zh-CN": {
+        title: "Fluo — 畅享无阻浏览，设备端即时翻译",
+        "nav.demo": "原位演示",
+        "nav.hardware": "硬件自适应",
+        "nav.features": "核心特性",
+        "nav.quickstart": "快速上手",
+        "hero.badge": "v0.1.0 公开测试 · Windows 10/11 x64",
+        "hero.localLine": "畅享无阻浏览，设备端即时翻译。",
+        "hero.desc": "Fluo 源自世界语“流畅、流动”，基于轻量级 Windows 原生 WebView2，结合量化 Apache 2.0 设备端 GGUF 引擎（Hy-MT2 / llama.cpp + Vulkan）与可选云端接口。",
+        "hero.ctaDownload": "下载 Windows 公测版",
+        "hero.ctaIssue": "反馈漏洞 / 误译",
+        "hero.ctaSource": "查看 GitHub 源码",
+        "badge.ondevice": "Apache 2.0 本地 Hy-MT2",
+        "badge.hw": "Vulkan GPU + 全架构 x64 CPU",
+        "badge.lang": "四国语言实时切换",
+        "badge.dpapi": "Windows DPAPI 金库 · 零遥测",
+        "demo.title": "不破坏排版的原位嵌入翻译",
+        "demo.subtitle": "保留超链接、行内代码块与页面结构，让您直接在原网页流畅阅读各类文档与资讯。",
+        "demo.tabOrig": "原文 (Original)",
+        "demo.tabInline": "Fluo 原位译文",
+        "demo.tabBi": "双语对照",
+        "demo.footHint": "在 Fluo 浏览器内鼠标悬停任意已译段落，即可一键操作：",
+        "demo.pillRetranslate": "重译此段",
+        "demo.pillEdit": "手动编辑",
+        "demo.pillReport": "报告误译",
+        "hw.title": "全 CPU + GPU 硬件组合自动适配",
+        "hw.subtitle": "内置 GGML_BACKEND_DL 与全指令集 CPU 后端，启动时自动探测 Vulkan 显存与指令集并匹配推荐的 Apache 2.0 Hy-MT2 模型。",
+        "hw.nvSub": "独立显存全量 Vulkan 加速",
+        "hw.amdSub": "独显 / 锐龙核显混合层切分",
+        "hw.intelSub": "独显与共享显存 Vulkan 计算",
+        "hw.cpuSub": "AVX-512 → AVX2 → AVX → SSE4.2 自动调度",
+        "feat.title": "专为沉浸阅读与本地隐私打造",
+        "feat.subtitle": "涵盖零费用离线大模型、多种精准翻译手势、防卡顿工作区与安全同步机制。",
+        "f1.title": "离线 Hy-MT2 引擎 (Apache 2.0)",
+        "f1.desc": "一键下载支持商用的 Apache 2.0 开源 GGUF 模型，无需 API 费用，网页正文全程不出本机。",
+        "f2.title": "框选区域翻译与悬停微调",
+        "f2.desc": "支持只点选长文局部区域的 Region Picker、双语对照切换、划词快译与正则术语表。",
+        "f3.title": "首次启动语言直选与热切换",
+        "f3.desc": "首次打开直达简洁的四国语言选择器（한국어 / English / 日本語 / 简体中文），后续也可在菜单和设置中随时切换。",
+        "f4.title": "无卡顿工作区与闲置标签休眠",
+        "f4.desc": "新建与切换工作区绝不冻结浏览界面，配合非活跃标签页自动休眠大幅降低内存占用。",
+        "f5.title": "Windows DPAPI 金库与防复活合并同步",
+        "f5.desc": "密钥、OAuth 令牌与保存密码均经 Windows DPAPI 本地加密，绝不写入 Google Drive / OneDrive 等同步文件夹。",
+        "f6.title": "无上限 GitHub Issues 公测反馈",
+        "f6.desc": "无需暴露开发者邮箱，点击反馈按钮即可一键打开已预填脱敏诊断数据的 GitHub Issue 或提交至自建 Cloudflare Worker。",
+        "qs.title": "公开测试快速开始 (Windows 10/11 x64)",
+        "qs.subtitle": "绿色便携分发包，无需安装 CUDA Toolkit、Python 或管理员驱动。",
+        "qs1.title": "下载便携包并整文件夹解压",
+        "qs1.desc": "前往 GitHub Releases 获取 Fluo-v0.1.0-win64.zip 并完整解压至同一目录（请保持同目录 DLL 与 Fluo.exe 在一起）。",
+        "qs2.title": "选定语言并下载推荐本地模型",
+        "qs2.desc": "首次启动选择界面语言与译文语言后，点击工具栏「翻译 ▾」→ 下载推荐模型（Hy-MT2-1.8B，Apache 2.0）即可离线翻译。",
+        "qs3.title": "按需连接云端 API 与查看条款",
+        "qs3.desc": "可在「设置 → AI 与模型」按需接入 Google Gemini、OpenAI 兼容接口或可选 OpenAI Legacy OAuth（所有凭据仅在本地加密保存）。",
+        "trust.title": "开源许可与使用条款透明公开",
+        "trust.desc": "公开 MIT 开源协议、Apache 2.0 Hy-MT2 模型说明，以及可选 OpenAI Legacy (codexLegacy) OAuth 的合规使用条款。",
+      },
+    };
+
+    const DEMO_PASSAGES = {
+      original: {
+        title: "Valve Developer Community — Source SDK Overview",
+        p1: 'The <a href="#demo" class="fake-link">Source SDK</a> compiles game assets using command-line tools like <code>vbsp.exe</code>, <code>vvis.exe</code>, and <code>vrad.exe</code> without altering your original <code>.vmf</code> map sources.',
+        p2: 'Modern third-party forks preserve every entity keyvalue, I/O connection, and <a href="#demo" class="fake-link">Hammer Editor</a> grid snapping constraint automatically.',
+      },
+      ko: {
+        title: "Valve 개발자 커뮤니티 — Source SDK 개요",
+        p1: '<a href="#demo" class="fake-link">Source SDK</a>는 원본 <code>.vmf</code> 맵 소스를 변경하지 않고 <code>vbsp.exe</code>, <code>vvis.exe</code>, <code>vrad.exe</code> 같은 명령줄 도구로 게임 에셋을 컴파일합니다.',
+        p2: '최신 서드파티 포크는 모든 엔티티 키값(keyvalue), I/O 연결 및 <a href="#demo" class="fake-link">Hammer Editor</a> 그리드 스냅 제약을 자동으로 그대로 보존합니다.',
+      },
+      en: {
+        title: "Valve Developer Community — Source SDK Overview (Fluo Reader)",
+        p1: 'The <a href="#demo" class="fake-link">Source SDK</a> compiles game assets with <code>vbsp.exe</code>, <code>vvis.exe</code>, and <code>vrad.exe</code> while leaving every inline link and code token intact in <code>.vmf</code> docs.',
+        p2: 'Every entity property, I/O link, and <a href="#demo" class="fake-link">Hammer Editor</a> constraint stays clickable and cleanly formatted directly inside the page flow.',
+      },
+      ja: {
+        title: "Valve 開発者コミュニティ — Source SDK 概要",
+        p1: '<a href="#demo" class="fake-link">Source SDK</a> は、元の <code>.vmf</code> マップソースを変更することなく、<code>vbsp.exe</code>・<code>vvis.exe</code>・<code>vrad.exe</code> などの CLI ツールでアセットをコンパイルします。',
+        p2: '最新の派生ツールでも、すべてのエンティティ設定・I/O 接続および <a href="#demo" class="fake-link">Hammer Editor</a> のグリッド制約がリンク付きのまま保たれます。',
+      },
+      "zh-CN": {
+        title: "Valve 开发者社区 — Source SDK 概览",
+        p1: '<a href="#demo" class="fake-link">Source SDK</a> 使用 <code>vbsp.exe</code>、<code>vvis.exe</code> 和 <code>vrad.exe</code> 等命令行工具编译游戏资产，同时不会修改原始 <code>.vmf</code> 地图源文件。',
+        p2: '各类实体的键值、I/O 连线以及 <a href="#demo" class="fake-link">Hammer Editor</a> 网格对齐约束都会与原始超链接一起自动保留。',
+      },
+    };
+
+    const HW_DETAILS = {
+      nvidia: {
+        ko: { backend: "Vulkan GPU 풀 오프로드 + 동적 x64 CPU", model: "Hy-MT2-7B (6GB+ VRAM) / Hy-MT2-1.8B-Q6_K", behavior: "CUDA Toolkit 별도 설치 없이 Vulkan으로 모든 레이어를 GPU VRAM에 즉시 적재합니다." },
+        en: { backend: "Vulkan Full GPU Offload + Dynamic x64 CPU", model: "Hy-MT2-7B (6GB+ VRAM) / Hy-MT2-1.8B-Q6_K", behavior: "Loads layers directly into dedicated VRAM over Vulkan — zero extra CUDA Toolkit installer required." },
+        ja: { backend: "Vulkan フル GPU オフロード + 動的 x64 CPU", model: "Hy-MT2-7B (6GB+ VRAM) / Hy-MT2-1.8B-Q6_K", behavior: "追加の CUDA 導入なしで Vulkan 経由により全レイヤーを高速 VRAM へ展開します。" },
+        "zh-CN": { backend: "Vulkan 全量 GPU 卸载 + 动态 x64 CPU", model: "Hy-MT2-7B (6GB+ VRAM) / Hy-MT2-1.8B-Q6_K", behavior: "无需安装额外 CUDA Toolkit，通过 Vulkan 直接将全部模型层加载到独立显存。" },
+      },
+      amd: {
+        ko: { backend: "Vulkan GPU / 하이브리드 GPU+CPU 분할", model: "Hy-MT2-7B (RX 외장) / Hy-MT2-1.8B-Q4_K_M (APU)", behavior: "Radeon RX 외장 GPU는 물론 Ryzen 내장 UMA 메모리도 자동 계산해 GPU+CPU를 함께 가속합니다." },
+        en: { backend: "Vulkan GPU or Hybrid GPU+CPU Layer Split", model: "Hy-MT2-7B (RX) / Hy-MT2-1.8B-Q4_K_M (Ryzen APU)", behavior: "Detects discrete RX VRAM and Ryzen iGPU UMA budgets automatically for full or hybrid acceleration." },
+        ja: { backend: "Vulkan GPU / ハイブリッド GPU+CPU 分割", model: "Hy-MT2-7B (RX) / Hy-MT2-1.8B-Q4_K_M (APU)", behavior: "Radeon RX や Ryzen APU の UMA 容量に合わせて GPU と CPU の負荷を自動最適配分します。" },
+        "zh-CN": { backend: "Vulkan GPU / 混合 GPU+CPU 分层加速", model: "Hy-MT2-7B (RX) / Hy-MT2-1.8B-Q4_K_M (锐龙 APU)", behavior: "自动读取 Radeon 独显与锐龙核显 UMA 显存预算，无缝分配 GPU 与 CPU 算力。" },
+      },
+      intel: {
+        ko: { backend: "Vulkan 공유·전용 메모리 가속 + AVX2 CPU", model: "Hy-MT2-1.8B-Q6_K / Hy-MT2-1.8B-Q4_K_M", behavior: "Intel Arc 외장 GPU와 Iris Xe / UHD 내장 그래픽의 공유 메모리까지 안전하게 활용합니다." },
+        en: { backend: "Vulkan Shared/Dedicated + AVX2 Dynamic CPU", model: "Hy-MT2-1.8B-Q6_K / Hy-MT2-1.8B-Q4_K_M", behavior: "Supports both discrete Intel Arc GPUs and integrated Iris Xe / UHD graphics safely via Vulkan." },
+        ja: { backend: "Vulkan 共有・専用アクセラレーション + AVX2 CPU", model: "Hy-MT2-1.8B-Q6_K / Hy-MT2-1.8B-Q4_K_M", behavior: "Intel Arc グラボに加え、薄型ノート搭載の Iris Xe / UHD でも安全に動作します。" },
+        "zh-CN": { backend: "Vulkan 共享/独立计算 + AVX2 动态 CPU", model: "Hy-MT2-1.8B-Q6_K / Hy-MT2-1.8B-Q4_K_M", behavior: "全面支持 Intel Arc 独显与笔记本常见 Iris Xe / UHD 核显安全加速。" },
+      },
+      cpu: {
+        ko: { backend: "범용 동적 x64 CPU (CPUID 최적 DLL 자동 로드)", model: "Hy-MT2-1.8B-Q4_K_M / Hy-MT2-1.8B-2Bit (초경량)", behavior: "외장 GPU가 없어도 AVX-512 → AVX2 → AVX → SSE4.2 순으로 지원 명령어를 자동 선택합니다." },
+        en: { backend: "Universal Dynamic x64 CPU (CPUID Auto-Select)", model: "Hy-MT2-1.8B-Q4_K_M / Hy-MT2-1.8B-2Bit", behavior: "No GPU required — selects the fastest bundled DLL from AVX-512 down to baseline x64/SSE4.2." },
+        ja: { backend: "ユニバーサル動的 x64 CPU（CPUID 自動切替）", model: "Hy-MT2-1.8B-Q4_K_M / Hy-MT2-1.8B-2Bit", behavior: "GPU 非搭載 PC でも AVX-512 から SSE4.2 まで最適命令セットを自動ロードします。" },
+        "zh-CN": { backend: "全指令集动态 x64 CPU（CPUID 自动加载）", model: "Hy-MT2-1.8B-Q4_K_M / Hy-MT2-1.8B-2Bit", behavior: "无需显卡，启动时按 AVX-512 → AVX2 → AVX → SSE4.2 顺序自动启用最优后端。" },
+      },
+    };
+
+    const HW_LABELS = {
+      ko: { l1: "활성 추론 백엔드", l2: "권장 Apache 2.0 모델", l3: "자동 최적화 방식" },
+      en: { l1: "Active Acceleration Backend", l2: "Recommended Apache 2.0 Model", l3: "Auto-Tuning Behavior" },
+      ja: { l1: "実行バックエンド", l2: "推奨 Apache 2.0 モデル", l3: "自動最適化の動作" },
+      "zh-CN": { l1: "激活加速后端", l2: "推荐 Apache 2.0 模型", l3: "自动调度策略" },
+    };
+
+    const params = new URLSearchParams(location.search);
+    const savedLang = localStorage.getItem("fluo.lang");
+    const browserLang = (navigator.language || "en").toLowerCase();
+    const detected = browserLang.startsWith("ko") ? "ko" : browserLang.startsWith("ja") ? "ja" : browserLang.startsWith("zh") ? "zh-CN" : "en";
+    let currentLang = COPY[params.get("lang")] ? params.get("lang") : (COPY[savedLang] ? savedLang : detected);
+    let currentMode = "inline";
+    let currentHw = "nvidia";
+
+    function renderDemo() {
+      const root = document.getElementById("demoContent");
+      const orig = DEMO_PASSAGES.original;
+      const tr = DEMO_PASSAGES[currentLang] || DEMO_PASSAGES.en;
+      if (currentMode === "original") {
+        root.innerHTML = `<h3>${orig.title}</h3><p>${orig.p1}</p><p>${orig.p2}</p>`;
+      } else if (currentMode === "inline") {
+        root.innerHTML = `<h3>${tr.title}</h3><p>${tr.p1}</p><p>${tr.p2}</p>`;
+      } else {
+        root.innerHTML = `<h3>${tr.title}</h3>
+          <div><p>${orig.p1}</p><p class="demo-bilingual">${tr.p1}</p></div>
+          <div><p>${orig.p2}</p><p class="demo-bilingual">${tr.p2}</p></div>`;
+      }
+    }
+
+    function renderHw() {
+      const labels = HW_LABELS[currentLang] || HW_LABELS.en;
+      const info = (HW_DETAILS[currentHw] || HW_DETAILS.nvidia)[currentLang] || HW_DETAILS.nvidia.en;
+      document.getElementById("hwDetail").innerHTML = `
+        <div class="hw-stat"><label>${labels.l1}</label><div>${info.backend}</div></div>
+        <div class="hw-stat"><label>${labels.l2}</label><div>${info.model}</div></div>
+        <div class="hw-stat"><label>${labels.l3}</label><div style="font-weight:500;color:var(--muted)">${info.behavior}</div></div>
+      `;
+    }
+
+    function applyLang(lang, updateUrl) {
+      if (!COPY[lang]) return;
+      currentLang = lang;
+      localStorage.setItem("fluo.lang", lang);
+      document.documentElement.lang = lang;
+      const dict = COPY[lang];
+      document.title = dict.title;
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (dict[key] !== undefined) el.textContent = dict[key];
+      });
+      document.querySelectorAll(".lang-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-lang") === lang);
+      });
+      if (updateUrl) {
+        const next = new URL(location.href);
+        next.searchParams.set("lang", lang);
+        history.replaceState(null, "", next);
+      }
+      renderDemo();
+      renderHw();
+    }
+
+    document.querySelectorAll(".lang-btn").forEach((btn) => {
+      btn.addEventListener("click", () => applyLang(btn.getAttribute("data-lang"), true));
+    });
+    document.querySelectorAll(".demo-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        currentMode = tab.getAttribute("data-mode");
+        document.querySelectorAll(".demo-tab").forEach((t) => t.classList.toggle("active", t === tab));
+        renderDemo();
+      });
+    });
+    document.querySelectorAll(".hw-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        currentHw = card.getAttribute("data-hw");
+        document.querySelectorAll(".hw-card").forEach((c) => c.classList.toggle("active", c === card));
+        renderHw();
+      });
+    });
+
+    const themeBtn = document.getElementById("themeBtn");
+    const savedTheme = localStorage.getItem("fluo.theme");
+    if (savedTheme === "light" || savedTheme === "dark") {
+      document.documentElement.setAttribute("data-theme", savedTheme);
+    }
+    themeBtn.addEventListener("click", () => {
+      const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      localStorage.setItem("fluo.theme", next);
+    });
+
+    applyLang(currentLang, false);
+  </script>
+</body>
+</html>

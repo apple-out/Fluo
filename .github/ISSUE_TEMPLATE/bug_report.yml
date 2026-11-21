@@ -1,0 +1,28 @@
+name: Bug Report / 버그 제보 / バグ報告 / 错误反馈
+description: Report a crash, UI freeze, layout glitch, or unexpected browser behavior.
+title: "[Bug] "
+labels: ["bug", "open-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing **Fluo Open Beta** (*Browse in flow. Translate on-device.*)!
+        Never paste personal API keys, OAuth tokens, or passwords below.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened? / 증상 설명
+      description: Describe what you did, what happened, and what you expected.
+    validations:
+      required: true
+  - type: input
+    id: url
+    attributes:
+      label: Affected Website URL (optional)
+      placeholder: https://example.com
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized Diagnostics (optional)
+      description: Use Settings -> Data & Feedback -> Copy Diagnostics Report, then paste here.
+      render: text

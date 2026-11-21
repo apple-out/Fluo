@@ -1,0 +1,13 @@
+# Rust / Tauri build output
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Frontend dependencies and build output
+node_modules/
+.svelte-kit/
+build/
+.vite/
+
+# Local environment
+.env
+.env.*

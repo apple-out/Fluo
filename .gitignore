@@ -1,0 +1,52 @@
+# Local configuration must never be committed.
+opencode.json
+**/opencode.json
+feedback-endpoint.txt
+sync-profile.json
+
+# Build artifacts & dependencies
+**/bin/
+**/obj/
+dist/
+tauri-app/node_modules/
+tauri-app/build/
+tauri-app/.svelte-kit/
+tauri-app/src-tauri/target/
+
+# IDE & OS files
+.vs/
+.idea/
+*.user
+*.suo
+*.cache
+TestResults/
+Thumbs.db
+Desktop.ini
+
+# Local app data / generated reader output / model weights
+reader-preview.html
+*.db
+*.db-shm
+*.db-wal
+*.gguf
+secrets.dpapi.json
+bridge.token.dpapi
+
+# Copied release executable & native runtime DLLs
+Fluo.exe
+번역브라우저.exe
+llama.dll
+ggml.dll
+ggml-base.dll
+ggml-*.dll
+
+# Local translation comparison samples
+번역본 비교용/
+
+# Tester distribution bundles (upload to GitHub Releases instead of git tree)
+release-tester/
+
+# Local planning & test notes (keep local-only)
+ai_read.md
+ai_reading_browser_plan_v2.md
+중간점검.md

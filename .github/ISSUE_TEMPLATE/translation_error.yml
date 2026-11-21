@@ -1,0 +1,33 @@
+name: Translation Quality Issue / 번역 오류·오역 제보 / 誤訳報告 / 翻译问题
+description: Report awkward phrasing, untranslated lines, broken formatting, or terminology errors.
+title: "[Translation] "
+labels: ["translation-quality", "open-beta"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help improve built-in Hy-MT2 prompts, glossary rules, and DOM extraction across sites.
+  - type: input
+    id: model_and_lang
+    attributes:
+      label: Model & Language Pair / 사용 모델 및 언어
+      placeholder: "e.g. Hy-MT2-1.8B-Q4_K_M | English -> 한국어 (Style: auto)"
+  - type: input
+    id: url
+    attributes:
+      label: Page URL (optional)
+      placeholder: https://example.com
+  - type: textarea
+    id: source_text
+    attributes:
+      label: Original Source Text / 원문
+    validations:
+      required: true
+  - type: textarea
+    id: output_text
+    attributes:
+      label: Problematic Translation / 문제 번역문
+  - type: textarea
+    id: suggested_text
+    attributes:
+      label: Suggested Translation / 권장 표현 (선택)
