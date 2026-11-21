@@ -1,3 +1,17 @@
+<p align="center">
+  <a href="https://apple-out.github.io/transratebrowser/?lang=zh-CN">
+    <img src="./docs/og-banner.png" alt="Fluo — Browse in flow. Translate on-device." width="760" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/apple-out/transratebrowser/releases/latest"><img src="https://img.shields.io/github/v/release/apple-out/transratebrowser?style=flat-square&color=5b8cff" alt="Release" /></a>
+  <a href="https://github.com/apple-out/transratebrowser/releases"><img src="https://img.shields.io/github/downloads/apple-out/transratebrowser/total?style=flat-square&color=8b5cf6" alt="Downloads" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-14b8a6?style=flat-square" alt="License: MIT" /></a>
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-0ea5e9?style=flat-square" alt="Platform: Windows x64" />
+  <a href="./THIRD_PARTY_LICENSES.md"><img src="https://img.shields.io/badge/On--Device%20AI-Hy--MT2%20(Apache%202.0)-22c55e?style=flat-square" alt="Hy-MT2 Apache 2.0" /></a>
+</p>
+
 [English](./README.md) · [한국어](./README.ko.md) · [日本語](./README.ja.md) · [简体中文](./README.zh-CN.md) · [使用条款](./TERMS_OF_USE.md) · [开源协议与模型政策](./THIRD_PARTY_LICENSES.md)
 
 # Fluo — *Browse in flow. Translate on-device.*
