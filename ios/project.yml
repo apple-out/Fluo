@@ -10,9 +10,8 @@ targets:
     sources:
       - path: FluoIOS
         excludes:
-          - "Resources/**"
-      - path: FluoIOS/Resources
-        type: folder
+          - "Scripts/**"
+      - path: FluoIOS/Scripts
         buildPhase: resources
     settings:
       base:

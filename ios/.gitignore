@@ -4,5 +4,5 @@ rust-core/Cargo.lock
 build/
 Payload/
 *.ipa
-FluoIOS/Resources/*.js
+FluoIOS/Scripts/*.js
 FluoIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png

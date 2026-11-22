@@ -55,10 +55,10 @@ jobs:
 
       - name: Bundle shared JS scripts & 1024x1024 AppIcon
         run: |
-          mkdir -p ios/FluoIOS/Resources
-          cp tauri-app/src-tauri/src/content_extract.js ios/FluoIOS/Resources/
-          cp tauri-app/src-tauri/src/inline_translate.js ios/FluoIOS/Resources/
-          cp tauri-app/src-tauri/src/inline_restore.js ios/FluoIOS/Resources/
+          mkdir -p ios/FluoIOS/Scripts
+          cp tauri-app/src-tauri/src/content_extract.js ios/FluoIOS/Scripts/
+          cp tauri-app/src-tauri/src/inline_translate.js ios/FluoIOS/Scripts/
+          cp tauri-app/src-tauri/src/inline_restore.js ios/FluoIOS/Scripts/
           sips -s format png -z 1024 1024 docs/icon.png --out ios/FluoIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
       - name: Generate Xcode project & build unsigned Fluo.app
