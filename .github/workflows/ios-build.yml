@@ -26,12 +26,16 @@ jobs:
         run: |
           ls -d /Applications/Xcode*.app || true
           SELECTED="$(python3 - <<'PY'
-          import glob, subprocess, sys
+          import glob, os, subprocess, sys
           best = None
           for app in sorted(glob.glob('/Applications/Xcode*.app')):
+              if os.path.islink(app):
+                  continue
               try:
+                  env = dict(os.environ, DEVELOPER_DIR=f'{app}/Contents/Developer')
                   ver = subprocess.check_output(
-                      [f'{app}/Contents/Developer/usr/bin/xcrun', '--sdk', 'iphoneos', '--show-sdk-version'],
+                      ['xcrun', '--sdk', 'iphoneos', '--show-sdk-version'],
+                      env=env,
                       text=True
                   ).strip()
                   parts = tuple(int(x) for x in ver.split('.') if x.isdigit())
