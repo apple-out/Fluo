@@ -1,0 +1,41 @@
+name: FluoIOS
+options:
+  bundleIdPrefix: com.appleout
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  FluoIOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: FluoIOS
+        excludes:
+          - "Resources/**"
+      - path: FluoIOS/Resources
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: Fluo
+        PRODUCT_BUNDLE_IDENTIFIER: com.appleout.transratebrowser
+        INFOPLIST_FILE: FluoIOS/Info.plist
+        SWIFT_VERSION: "5.9"
+        SWIFT_OBJC_BRIDGING_HEADER: FluoIOS/FluoIOS-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/rust-core/include"
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/rust-core/target/aarch64-apple-ios/release"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-lfluo_ios_core"
+          - "-lc++"
+        CODE_SIGNING_ALLOWED: "NO"
+        ENABLE_BITCODE: "NO"
+    dependencies:
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: Accelerate.framework
+      - sdk: WebKit.framework
+      - sdk: Security.framework

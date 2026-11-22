@@ -1,0 +1,99 @@
+name: Build Fluo iOS (Unsigned IPA)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-build.yml"
+      - "tauri-app/src-tauri/src/content_extract.js"
+      - "tauri-app/src-tauri/src/inline_translate.js"
+      - "tauri-app/src-tauri/src/inline_restore.js"
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust iOS target & build tools
+        run: |
+          rustup target add aarch64-apple-ios
+          brew install xcodegen ninja cmake
+
+      - name: Cache Rust & llama.cpp iOS build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ios/rust-core/target
+          key: fluo-ios-rust-${{ runner.os }}-${{ hashFiles('ios/rust-core/Cargo.toml', 'ios/rust-core/src/**') }}
+          restore-keys: |
+            fluo-ios-rust-${{ runner.os }}-
+
+      - name: Build Rust inference static library (aarch64-apple-ios + Metal)
+        working-directory: ios/rust-core
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+          CMAKE_OSX_ARCHITECTURES: "arm64"
+          CMAKE_SYSTEM_NAME: "iOS"
+          CMAKE_GENERATOR: "Ninja"
+        run: |
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          IOS_FLAGS="-isysroot $SDK_PATH -arch arm64 -miphoneos-version-min=16.0"
+          export CMAKE_OSX_SYSROOT="$SDK_PATH"
+          export CFLAGS_aarch64_apple_ios="$IOS_FLAGS"
+          export CXXFLAGS_aarch64_apple_ios="$IOS_FLAGS"
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios="$IOS_FLAGS"
+          cargo build --release --target aarch64-apple-ios --features metal
+          ls -lh target/aarch64-apple-ios/release/libfluo_ios_core.a
+
+      - name: Bundle shared JS scripts & 1024x1024 AppIcon
+        run: |
+          mkdir -p ios/FluoIOS/Resources
+          cp tauri-app/src-tauri/src/content_extract.js ios/FluoIOS/Resources/
+          cp tauri-app/src-tauri/src/inline_translate.js ios/FluoIOS/Resources/
+          cp tauri-app/src-tauri/src/inline_restore.js ios/FluoIOS/Resources/
+          sips -s format png -z 1024 1024 docs/icon.png --out ios/FluoIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+
+      - name: Generate Xcode project & build unsigned Fluo.app
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild \
+            -project FluoIOS.xcodeproj \
+            -scheme FluoIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
+
+      - name: Package Fluo-iOS-v0.1.0-unsigned.ipa
+        working-directory: ios
+        run: |
+          rm -rf Payload Fluo-iOS-v0.1.0-unsigned.ipa
+          mkdir -p Payload
+          APP_PATH="$(find build/DerivedData -name "Fluo.app" -type d | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "Fluo.app not found!"
+            exit 1
+          fi
+          cp -R "$APP_PATH" Payload/Fluo.app
+          zip -r -q Fluo-iOS-v0.1.0-unsigned.ipa Payload
+          ls -lh Fluo-iOS-v0.1.0-unsigned.ipa
+
+      - name: Upload unsigned IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fluo-iOS-v0.1.0-unsigned-ipa
+          path: ios/Fluo-iOS-v0.1.0-unsigned.ipa
+          retention-days: 30

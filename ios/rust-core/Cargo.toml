@@ -1,0 +1,25 @@
+[package]
+name = "fluo-ios-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "On-device Hy-MT2 inference C-ABI core for Fluo iOS"
+
+[lib]
+name = "fluo_ios_core"
+crate-type = ["staticlib"]
+
+[dependencies]
+encoding_rs = "0.8"
+llama-cpp-2 = { version = "0.1.161", default-features = false }
+serde_json = "1"
+
+[features]
+default = []
+metal = ["llama-cpp-2/metal"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true

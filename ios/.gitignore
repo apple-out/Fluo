@@ -1,0 +1,8 @@
+FluoIOS.xcodeproj/
+rust-core/target/
+rust-core/Cargo.lock
+build/
+Payload/
+*.ipa
+FluoIOS/Resources/*.js
+FluoIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png
