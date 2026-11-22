@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct OnboardingSheet: View {
     @ObservedObject var store: BrowserStore
@@ -363,67 +364,7 @@ struct TabsSheet: View {
                     ScrollView {
                         LazyVStack(spacing: 10) {
                             ForEach(store.activeWorkspaceTabs) { tab in
-                                let isCurrent = tab.id == store.activeTabId
-                                HStack(spacing: 10) {
-                                    Button {
-                                        store.activeTabId = tab.id
-                                        dismiss()
-                                    } label: {
-                                        HStack(spacing: 10) {
-                                            if tab.isPinned {
-                                                Image(systemName: "pin.fill")
-                                                    .foregroundStyle(FluoThemeTokens.indigo)
-                                                    .font(.caption)
-                                            }
-                                            if tab.isPrivate {
-                                                Text(t("tabs.privateBadge"))
-                                                    .font(.caption2.bold())
-                                                    .padding(.horizontal, 7)
-                                                    .padding(.vertical, 3)
-                                                    .background(FluoThemeTokens.violet.opacity(0.28), in: Capsule())
-                                            }
-                                            VStack(alignment: .leading, spacing: 3) {
-                                                Text(tab.title)
-                                                    .font(.subheadline.weight(isCurrent ? .bold : .medium))
-                                                    .lineLimit(1)
-                                                Text(tab.urlString)
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                                    .lineLimit(1)
-                                            }
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    }
-                                    .buttonStyle(.plain)
-
-                                    if !tab.isPinned && store.tabs.count > 1 {
-                                        Button(role: .destructive) {
-                                            store.closeTab(tab.id)
-                                        } label: {
-                                            Image(systemName: "xmark.circle.fill")
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                                .padding(14)
-                                .liquidGlass(
-                                    cornerRadius: 18,
-                                    tint: tab.isPrivate ? FluoThemeTokens.violet : (isCurrent ? FluoThemeTokens.indigo : .clear)
-                                )
-                                .contextMenu {
-                                    Button {
-                                        store.togglePinTab(tab.id)
-                                    } label: {
-                                        Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
-                                    }
-
-                                    Menu(t("tabs.moveWs")) {
-                                        ForEach(store.userData.workspaces) { ws in
-                                            Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
-                                        }
-                                    }
-                                }
+                                SwipeableTabCard(store: store, tab: tab, dismiss: { dismiss() })
                             }
                         }
                         .padding(.horizontal, 16)
@@ -456,6 +397,130 @@ struct TabsSheet: View {
                 Button(t("common.cancel"), role: .cancel) {}
                 Button(t("common.add")) { store.createWorkspace(name: wsDraftName) }
             }
+        }
+    }
+}
+
+private struct SwipeableTabCard: View {
+    @ObservedObject var store: BrowserStore
+    @ObservedObject var tab: BrowserTab
+    var dismiss: () -> Void
+
+    @State private var dragX: CGFloat = 0
+
+    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var canSwipeClose: Bool {
+        !tab.isPinned && store.tabs.count > 1
+    }
+
+    var body: some View {
+        let isCurrent = tab.id == store.activeTabId
+        ZStack(alignment: .trailing) {
+            if dragX < -8 {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(.red.opacity(min(0.85, Double(-dragX / 95) * 0.85)))
+                    .overlay(alignment: .trailing) {
+                        Image(systemName: "trash.fill")
+                            .foregroundStyle(.white)
+                            .padding(.trailing, 20)
+                            .opacity(min(1.0, Double(-dragX / 55)))
+                    }
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    store.activeTabId = tab.id
+                    dismiss()
+                } label: {
+                    HStack(spacing: 10) {
+                        if tab.isPinned {
+                            Image(systemName: "pin.fill")
+                                .foregroundStyle(FluoThemeTokens.indigo)
+                                .font(.caption)
+                        }
+                        if tab.isPrivate {
+                            Text(t("tabs.privateBadge"))
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(FluoThemeTokens.violet.opacity(0.28), in: Capsule())
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(tab.title)
+                                .font(.subheadline.weight(isCurrent ? .bold : .medium))
+                                .lineLimit(1)
+                            Text(tab.urlString)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+
+                if canSwipeClose {
+                    Button(role: .destructive) {
+                        store.closeTab(tab.id)
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(14)
+            .liquidGlass(
+                cornerRadius: 18,
+                tint: tab.isPrivate ? FluoThemeTokens.violet : (isCurrent ? FluoThemeTokens.indigo : .clear)
+            )
+            .contextMenu {
+                Button {
+                    store.togglePinTab(tab.id)
+                } label: {
+                    Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
+                }
+
+                Menu(t("tabs.moveWs")) {
+                    ForEach(store.userData.workspaces) { ws in
+                        Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
+                    }
+                }
+            }
+            .offset(x: dragX)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .onChanged { value in
+                        guard canSwipeClose else { return }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if dx < 0 && abs(dx) > abs(dy) * 1.35 {
+                            dragX = max(-140, dx)
+                        }
+                    }
+                    .onEnded { value in
+                        guard canSwipeClose else {
+                            dragX = 0
+                            return
+                        }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if dx < -95 && abs(dx) > abs(dy) {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            withAnimation(.easeOut(duration: 0.18)) {
+                                dragX = -320
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
+                                store.closeTab(tab.id)
+                            }
+                        } else {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                                dragX = 0
+                            }
+                        }
+                    }
+            )
         }
     }
 }

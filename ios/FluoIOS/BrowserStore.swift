@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 import WebKit
 
 enum InlineDisplayMode: String {
@@ -8,7 +9,7 @@ enum InlineDisplayMode: String {
     case bilingual
 }
 
-final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDelegate {
+final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDelegate, UIGestureRecognizerDelegate {
     let id = UUID()
     let webView: WKWebView
 
@@ -27,11 +28,15 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
 
     var onVisitRecorded: ((String, String) -> Void)?
     var onNavigationSyncAdBlock: ((WKWebView, String?) -> Void)?
+    var onScrollDockCollapseChanged: ((Bool) -> Void)?
+    var onTwoFingerTap: (() -> Void)?
 
     private var obsProgress: NSKeyValueObservation?
     private var obsLoading: NSKeyValueObservation?
     private var obsTitle: NSKeyValueObservation?
     private var obsUrl: NSKeyValueObservation?
+    private let refreshControl = UIRefreshControl()
+    private var panAnchorY: CGFloat = 0
 
     init(initialURL: URL, workspaceId: String, isPrivate: Bool = false) {
         let config = WKWebViewConfiguration()
@@ -48,6 +53,16 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
 
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        refreshControl.addTarget(self, action: #selector(handlePullToRefresh(_:)), for: .valueChanged)
+        webView.scrollView.refreshControl = refreshControl
+        webView.scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
+
+        let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap(_:)))
+        twoFingerTap.numberOfTouchesRequired = 2
+        twoFingerTap.cancelsTouchesInView = false
+        twoFingerTap.delegate = self
+        webView.addGestureRecognizer(twoFingerTap)
+
         obsProgress = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in self?.progress = wv.estimatedProgress }
         }
@@ -56,6 +71,9 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                 self?.isLoading = wv.isLoading
                 self?.canGoBack = wv.canGoBack
                 self?.canGoForward = wv.canGoForward
+                if !wv.isLoading, self?.refreshControl.isRefreshing == true {
+                    self?.refreshControl.endRefreshing()
+                }
             }
         }
         obsTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
@@ -105,6 +123,48 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         _ = webView.evaluateJavaScript("document.documentElement.style.zoom = '\(pct)%';", completionHandler: nil)
     }
 
+    func scrollToTop() {
+        let top = -webView.scrollView.adjustedContentInset.top
+        webView.scrollView.setContentOffset(CGPoint(x: 0, y: top), animated: true)
+    }
+
+    @objc private func handlePullToRefresh(_ sender: UIRefreshControl) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        webView.reload()
+    }
+
+    @objc private func handleScrollPan(_ pan: UIPanGestureRecognizer) {
+        let ty = pan.translation(in: webView).y
+        switch pan.state {
+        case .began:
+            panAnchorY = ty
+        case .changed:
+            let dy = ty - panAnchorY
+            let offsetY = webView.scrollView.contentOffset.y
+            if dy < -28 && offsetY > 44 {
+                panAnchorY = ty
+                onScrollDockCollapseChanged?(true)
+            } else if (dy > 18 && offsetY > 10) || offsetY <= 10 {
+                panAnchorY = ty
+                onScrollDockCollapseChanged?(false)
+            }
+        default:
+            break
+        }
+    }
+
+    @objc private func handleTwoFingerTap(_ tap: UITapGestureRecognizer) {
+        guard tap.state == .ended else { return }
+        onTwoFingerTap?()
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+
     nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
         let host = navigationAction.request.url?.host
         await MainActor.run {
@@ -148,6 +208,7 @@ final class BrowserStore: ObservableObject {
     @Published var translationError: String?
 
     @Published var isPickingRegion = false
+    @Published var isDockCollapsed = false
     @Published var showFindBar = false
     @Published var findQuery = ""
     @Published var findCurrent = 0
@@ -198,6 +259,22 @@ final class BrowserStore: ObservableObject {
                 host: host,
                 allowlist: self.userData.adBlockAllowlist
             )
+        }
+        tab.onScrollDockCollapseChanged = { [weak self, weak tab] collapsed in
+            Task { @MainActor in
+                guard let self, let tab, self.activeTabId == tab.id else { return }
+                guard !self.showFindBar && !self.isPickingRegion else { return }
+                if self.isDockCollapsed != collapsed {
+                    self.isDockCollapsed = collapsed
+                }
+            }
+        }
+        tab.onTwoFingerTap = { [weak self, weak tab] in
+            Task { @MainActor in
+                guard let self, let tab, self.activeTabId == tab.id, !self.isPickingRegion else { return }
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                self.quickToggleTranslation()
+            }
         }
         AdBlockManager.shared.apply(
             to: tab.webView,
@@ -309,6 +386,35 @@ final class BrowserStore: ObservableObject {
         if let tab = tabs.first(where: { $0.id == tabId }) {
             tab.workspaceId = wsId
             objectWillChange.send()
+        }
+    }
+
+    @discardableResult
+    func switchAdjacentTab(delta: Int, createIfPastEnd: Bool = true) -> Bool {
+        let list = activeWorkspaceTabs
+        guard let currentIndex = list.firstIndex(where: { $0.id == activeTabId }) else { return false }
+        let nextIndex = currentIndex + delta
+        if nextIndex >= list.count {
+            if createIfPastEnd {
+                newTab(isPrivate: activeTab.isPrivate)
+                isDockCollapsed = false
+                return true
+            }
+            return false
+        }
+        guard nextIndex >= 0 else { return false }
+        activeTabId = list[nextIndex].id
+        isDockCollapsed = false
+        return true
+    }
+
+    func quickToggleTranslation() {
+        if isTranslating {
+            cancelTranslation()
+        } else if activeTab.displayMode == .original {
+            translateActiveTab(bilingual: false)
+        } else {
+            restoreOriginal()
         }
     }
 
