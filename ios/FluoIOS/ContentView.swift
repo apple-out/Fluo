@@ -70,6 +70,7 @@ struct ContentView: View {
                 }
 
                 WebViewContainer(webView: store.activeTab.webView)
+                    .id(store.activeTab.id)
                     .ignoresSafeArea(edges: .bottom)
             }
 

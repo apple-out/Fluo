@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import WebKit
 
@@ -158,6 +159,7 @@ final class BrowserStore: ObservableObject {
 
     private var translationTask: Task<Void, Never>?
     private var regionPollTask: Task<Void, Never>?
+    private var tabCancellables: [UUID: AnyCancellable] = [:]
 
     init() {
         let loaded = FluoUserDataSnapshot.load()
@@ -182,6 +184,9 @@ final class BrowserStore: ObservableObject {
     }
 
     private func wireTabCallbacks(_ tab: BrowserTab) {
+        tabCancellables[tab.id] = tab.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         tab.onVisitRecorded = { [weak self] url, title in
             self?.recordHistory(url: url, title: title)
         }
@@ -253,6 +258,7 @@ final class BrowserStore: ObservableObject {
     func closeTab(_ id: UUID) {
         guard tabs.count > 1 else { return }
         if tabs.first(where: { $0.id == id })?.isPinned == true { return }
+        tabCancellables.removeValue(forKey: id)
         tabs.removeAll { $0.id == id }
         if !tabs.contains(where: { $0.id == activeTabId }) {
             activeTabId = activeWorkspaceTabs.first?.id ?? tabs[0].id
