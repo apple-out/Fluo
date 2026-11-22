@@ -50,7 +50,7 @@ final class TranslationEngine {
         }
         switch provider {
         case .hyMt2:
-            let modelUrl = ModelCatalog.shared.filePath(for: modelId)
+            let modelUrl = await ModelCatalog.shared.filePath(for: modelId)
             guard FileManager.default.fileExists(atPath: modelUrl.path) else {
                 throw NSError(
                     domain: "FluoInference",

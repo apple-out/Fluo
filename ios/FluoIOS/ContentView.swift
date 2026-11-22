@@ -47,7 +47,7 @@ struct ContentView: View {
                 showOnboarding = true
             }
         }
-        .onChange(of: store.activeTab.urlString) { _, nextUrl in
+        .onChange(of: store.activeTab.urlString) { nextUrl in
             urlDraft = nextUrl
         }
         .sheet(isPresented: $showOnboarding) {
@@ -323,7 +323,7 @@ private struct TabsSheet: View {
             }
             .navigationTitle(t("tabs.title"))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         store.newTab()
                         dismiss()
@@ -355,13 +355,13 @@ private struct SettingsSheet: View {
                             Text(lang.nativeName).tag(lang)
                         }
                     }
-                    .onChange(of: store.uiLang) { _, newLang in
+                    .onChange(of: store.uiLang) { newLang in
                         store.targetLanguage = newLang.defaultTargetLanguage
                         store.savePreferences()
                     }
 
                     TextField(t("set.targetLang"), text: $store.targetLanguage)
-                        .onChange(of: store.targetLanguage) { _, _ in store.savePreferences() }
+                        .onChange(of: store.targetLanguage) { _ in store.savePreferences() }
                 }
 
                 Section(t("set.aiSection")) {
@@ -370,7 +370,7 @@ private struct SettingsSheet: View {
                         Text(t("set.provider.gemini")).tag(AiProviderKind.googleGemini)
                         Text(t("set.provider.openai")).tag(AiProviderKind.openAiCompatible)
                     }
-                    .onChange(of: store.provider) { _, _ in store.savePreferences() }
+                    .onChange(of: store.provider) { _ in store.savePreferences() }
                 }
 
                 if store.provider == .hyMt2 {
@@ -433,7 +433,7 @@ private struct SettingsSheet: View {
                     Section(t("set.provider.gemini")) {
                         SecureField(t("set.apiKey"), text: $geminiKeyDraft)
                         TextField(t("set.modelId"), text: $store.geminiModel)
-                            .onChange(of: store.geminiModel) { _, _ in store.savePreferences() }
+                            .onChange(of: store.geminiModel) { _ in store.savePreferences() }
                         HStack {
                             Button(t("set.saveKey")) {
                                 KeychainStore.save(account: "gemini_api_key", value: geminiKeyDraft)
@@ -450,11 +450,11 @@ private struct SettingsSheet: View {
                         TextField(t("set.baseUrl"), text: $store.openAiBaseUrl)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                            .onChange(of: store.openAiBaseUrl) { _, _ in store.savePreferences() }
+                            .onChange(of: store.openAiBaseUrl) { _ in store.savePreferences() }
                         SecureField(t("set.apiKey"), text: $openAiKeyDraft)
                         TextField(t("set.modelId"), text: $store.openAiModel)
                             .textInputAutocapitalization(.never)
-                            .onChange(of: store.openAiModel) { _, _ in store.savePreferences() }
+                            .onChange(of: store.openAiModel) { _ in store.savePreferences() }
                         HStack {
                             Button(t("set.saveKey")) {
                                 KeychainStore.save(account: "openai_api_key", value: openAiKeyDraft)
@@ -470,7 +470,7 @@ private struct SettingsSheet: View {
             }
             .navigationTitle(t("set.title"))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) {
                         store.savePreferences()
                         dismiss()

@@ -8,7 +8,7 @@ struct FluoIOSApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(store: store)
-                .onChange(of: scenePhase) { _, phase in
+                .onChange(of: scenePhase) { phase in
                     if phase == .background {
                         // Release GGUF / Metal RAM buffers immediately to avoid iOS Jetsam kills.
                         TranslationEngine.shared.unloadOnDeviceModel()
