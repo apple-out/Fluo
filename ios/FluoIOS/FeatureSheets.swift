@@ -47,15 +47,16 @@ struct OnboardingSheet: View {
                                         }
                                         .padding(16)
                                         .foregroundStyle(selected ? .white : .primary)
-                                        .liquidGlass(
-                                            cornerRadius: 18,
-                                            tint: selected ? FluoThemeTokens.indigo : .clear,
-                                            strokeOpacity: selected ? 1.0 : 0.7,
-                                            interactive: true,
-                                            prominent: selected
-                                        )
+                                        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
+                                    .liquidGlass(
+                                        cornerRadius: 18,
+                                        tint: selected ? FluoThemeTokens.indigo : .clear,
+                                        strokeOpacity: selected ? 1.0 : 0.7,
+                                        interactive: true,
+                                        prominent: selected
+                                    )
                                 }
                             }
                         }
@@ -67,7 +68,7 @@ struct OnboardingSheet: View {
                             TextField(t("onb.targetLabel"), text: $store.targetLanguage)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 12)
-                                .liquidGlass(cornerRadius: 16, interactive: true)
+                                .liquidGlass(cornerRadius: 16)
                         }
 
                         Button {
@@ -80,9 +81,10 @@ struct OnboardingSheet: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
-                                .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(LiquidPressButtonStyle())
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
                     }
                     .padding(20)
                 }
@@ -125,9 +127,10 @@ struct TranslateSheet: View {
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 11)
-                                            .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+                                            .contentShape(Capsule())
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
+                                    .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
                                 }
                             }
                             .padding(16)
@@ -192,9 +195,10 @@ struct TranslateSheet: View {
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .liquidGlassPill(interactive: true)
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(LiquidPressButtonStyle())
+                        .liquidGlassPill(interactive: true)
 
                         // Translation styles & typography card
                         VStack(alignment: .leading, spacing: 12) {
@@ -216,13 +220,14 @@ struct TranslateSheet: View {
                                                     .padding(.horizontal, 12)
                                                     .padding(.vertical, 7)
                                                     .foregroundStyle(active ? .white : .primary)
-                                                    .liquidGlassPill(
-                                                        tint: active ? FluoThemeTokens.indigo : .clear,
-                                                        interactive: true,
-                                                        prominent: active
-                                                    )
+                                                    .contentShape(Capsule())
                                             }
                                             .buttonStyle(LiquidPressButtonStyle())
+                                            .liquidGlassPill(
+                                                tint: active ? FluoThemeTokens.indigo : .clear,
+                                                interactive: true,
+                                                prominent: active
+                                            )
                                         }
                                     }
                                 }
@@ -288,14 +293,15 @@ struct TranslateSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
             .padding(14)
-            .liquidGlass(
-                cornerRadius: 20,
-                tint: active ? FluoThemeTokens.indigo : .clear,
-                interactive: true,
-                prominent: active
-            )
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(LiquidPressButtonStyle())
+        .liquidGlass(
+            cornerRadius: 20,
+            tint: active ? FluoThemeTokens.indigo : .clear,
+            interactive: true,
+            prominent: active
+        )
     }
 }
 
@@ -327,13 +333,14 @@ struct TabsSheet: View {
                                             .padding(.horizontal, 14)
                                             .padding(.vertical, 8)
                                             .foregroundStyle(active ? .white : .primary)
-                                            .liquidGlassPill(
-                                                tint: active ? FluoThemeTokens.indigo : .clear,
-                                                interactive: true,
-                                                prominent: active
-                                            )
+                                            .contentShape(Capsule())
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
+                                    .liquidGlassPill(
+                                        tint: active ? FluoThemeTokens.indigo : .clear,
+                                        interactive: true,
+                                        prominent: active
+                                    )
                                     .contextMenu {
                                         if ws.id != "default" {
                                             Button(role: .destructive) {
@@ -352,9 +359,10 @@ struct TabsSheet: View {
                                     Image(systemName: "plus")
                                         .font(.caption.bold())
                                         .frame(width: 30, height: 30)
-                                        .liquidGlassPill(interactive: true)
+                                        .contentShape(Circle())
                                 }
                                 .buttonStyle(LiquidPressButtonStyle())
+                                .liquidGlassCircle(interactive: true)
                             }
                         }
                         .padding(.horizontal, 16)
@@ -625,14 +633,15 @@ struct MenuSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
             .padding(14)
-            .liquidGlass(
-                cornerRadius: 20,
-                tint: active ? FluoThemeTokens.indigo : .clear,
-                interactive: true,
-                prominent: active
-            )
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(LiquidPressButtonStyle())
+        .liquidGlass(
+            cornerRadius: 20,
+            tint: active ? FluoThemeTokens.indigo : .clear,
+            interactive: true,
+            prominent: active
+        )
     }
 
     private func menuRow(_ title: String, icon: String, action: @escaping () -> Void) -> some View {

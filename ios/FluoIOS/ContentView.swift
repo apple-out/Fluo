@@ -101,7 +101,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
-                .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true)
+                .liquidGlassPill(tint: FluoThemeTokens.indigo)
                 .padding(.bottom, store.isDockCollapsed ? 58 : 84)
             }
 
@@ -207,11 +207,11 @@ struct ContentView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .liquidGlassPill(interactive: true)
+        .liquidGlassPill()
     }
 
     private var dockDragGesture: some Gesture {
-        DragGesture(minimumDistance: 22)
+        DragGesture(minimumDistance: 24)
             .onChanged { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
@@ -272,8 +272,7 @@ struct ContentView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .liquidGlassPill(
-            tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear,
-            interactive: true
+            tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
         )
         .contentShape(Capsule())
         .onTapGesture(count: 2) {
@@ -290,7 +289,7 @@ struct ContentView: View {
             }
         }
         .offset(x: dockDragOffset)
-        .simultaneousGesture(dockDragGesture)
+        .gesture(dockDragGesture)
         .padding(.bottom, 6)
     }
 
@@ -302,10 +301,11 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .liquidGlassCircle(interactive: true)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(LiquidPressButtonStyle())
+                .liquidGlassCircle(interactive: true)
                 .disabled(!store.activeTab.canGoBack)
                 .opacity(store.activeTab.canGoBack ? 1.0 : 0.4)
                 .contextMenu {
@@ -319,10 +319,11 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 34, height: 34)
-                        .liquidGlassCircle(interactive: true)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(LiquidPressButtonStyle())
+                .liquidGlassCircle(interactive: true)
                 .disabled(!store.activeTab.canGoForward)
                 .opacity(store.activeTab.canGoForward ? 1.0 : 0.4)
                 .contextMenu {
@@ -356,59 +357,81 @@ struct ContentView: View {
                         Image(systemName: store.activeTab.isLoading ? "xmark" : "arrow.clockwise")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 11)
-                .padding(.vertical, 8)
+                .padding(.vertical, 6)
                 .liquidGlassPill(
-                    tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear,
-                    interactive: true
+                    tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
                 )
+                .gesture(dockDragGesture)
 
-                Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
-                    .frame(width: 36, height: 36)
-                    .liquidGlassCircle(
-                        tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
-                        interactive: true,
-                        prominent: store.activeTab.displayMode != .original
-                    )
-                    .contentShape(Circle())
-                    .onTapGesture {
-                        activeSheet = .translate
-                    }
-                    .onLongPressGesture(minimumDuration: 0.42) {
+                Button {
+                    activeSheet = .translate
+                } label: {
+                    Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(LiquidPressButtonStyle())
+                .liquidGlassCircle(
+                    tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
+                    interactive: true,
+                    prominent: store.activeTab.displayMode != .original
+                )
+                .contextMenu {
+                    Button {
                         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        store.quickToggleTranslation()
+                        store.translateActiveTab(bilingual: false)
+                    } label: {
+                        Label(t("tr.inline"), systemImage: "sparkles")
                     }
-                    .accessibilityAddTraits(.isButton)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        store.translateActiveTab(bilingual: true)
+                    } label: {
+                        Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
+                    }
+                    if store.activeTab.displayMode != .original {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            store.restoreOriginal()
+                        } label: {
+                            Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                }
 
                 Button {
                     activeSheet = .tabs
                 } label: {
                     Text("\(store.activeWorkspaceTabs.count)")
                         .font(.caption.bold())
-                        .frame(width: 32, height: 32)
-                        .liquidGlass(cornerRadius: 11, interactive: true)
+                        .frame(width: 34, height: 34)
+                        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
                 .buttonStyle(LiquidPressButtonStyle())
+                .liquidGlass(cornerRadius: 11, interactive: true)
 
                 Button {
                     activeSheet = .menu
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .bold))
-                        .frame(width: 34, height: 34)
-                        .liquidGlassCircle(interactive: true)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(LiquidPressButtonStyle())
+                .liquidGlassCircle(interactive: true)
             }
         }
         .liquidGlassDockChrome(tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear)
         .offset(x: dockDragOffset)
-        .simultaneousGesture(dockDragGesture)
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
     }
