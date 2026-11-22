@@ -108,7 +108,7 @@ final class BrowserStore: ObservableObject {
         self.openAiBaseUrl = UserDefaults.standard.string(forKey: "fluo.openAiBaseUrl") ?? "https://api.openai.com/v1"
         self.openAiModel = UserDefaults.standard.string(forKey: "fluo.openAiModel") ?? "gpt-4.1-mini"
 
-        let first = BrowserTab(initialURL: URL(string: "https://developer.valvesoftware.com/wiki/Source_SDK_Overview")!)
+        let first = BrowserTab(initialURL: URL(string: "https://www.google.com/")!)
         self.tabs = [first]
         self.activeTabId = first.id
     }
@@ -128,7 +128,7 @@ final class BrowserStore: ObservableObject {
         UserDefaults.standard.set(openAiModel, forKey: "fluo.openAiModel")
     }
 
-    func newTab(urlString: String = "https://en.wikipedia.org/wiki/Esperanto") {
+    func newTab(urlString: String = "https://www.google.com/") {
         let url = URL(string: urlString) ?? URL(string: "https://www.google.com")!
         let tab = BrowserTab(initialURL: url)
         tabs.append(tab)
