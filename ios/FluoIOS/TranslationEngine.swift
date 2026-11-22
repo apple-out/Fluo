@@ -37,17 +37,41 @@ final class TranslationEngine {
         activeLocalModelPath = nil
     }
 
+    static func matchingGlossaryHint(for source: String, glossary: [GlossaryItem]) -> String {
+        guard !glossary.isEmpty else { return "" }
+        let matched = glossary.filter { item in
+            let needle = item.source.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !needle.isEmpty else { return false }
+            if item.caseSensitive {
+                return source.contains(needle)
+            }
+            return source.localizedCaseInsensitiveContains(needle)
+        }
+        guard !matched.isEmpty else { return "" }
+        return matched.map { item in
+            let target = item.target.trimmingCharacters(in: .whitespacesAndNewlines)
+            if target.isEmpty {
+                return "\(item.source) -> \(item.source) (keep original)"
+            }
+            return "\(item.source) -> \(target)"
+        }.joined(separator: "\n")
+    }
+
     func translateText(
         _ source: String,
         provider: AiProviderKind,
         modelId: String,
         baseUrl: String,
         targetLanguage: String,
-        style: String = "natural"
+        style: String = "auto",
+        glossary: [GlossaryItem] = []
     ) async throws -> String {
         if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return source
         }
+        let glossaryHint = Self.matchingGlossaryHint(for: source, glossary: glossary)
+        let glossaryBlock = glossaryHint.isEmpty ? "" : "\nGlossary (apply strictly):\n\(glossaryHint)\n"
+
         switch provider {
         case .hyMt2:
             let modelUrl = await ModelCatalog.shared.filePath(for: modelId)
@@ -65,7 +89,9 @@ final class TranslationEngine {
                 let rawPtr = source.withCString { cSrc in
                     targetLanguage.withCString { cTarget in
                         style.withCString { cStyle in
-                            fluo_translate_text(cSrc, cTarget, cStyle)
+                            glossaryHint.withCString { cGlossary in
+                                fluo_translate_with_glossary(cSrc, cTarget, cStyle, cGlossary)
+                            }
                         }
                     }
                 }
@@ -109,7 +135,7 @@ final class TranslationEngine {
             guard let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(modelName):generateContent?key=\(apiKey)") else {
                 throw URLError(.badURL)
             }
-            let prompt = "Translate the following passage into \(targetLanguage), keeping inline link/media tags like [[1|...]] or [[img1]] verbatim. Output ONLY the translation.\n\n\(source)"
+            let prompt = "Translate the following passage into \(targetLanguage) using style '\(style)', keeping inline link/media tags like [[1|...]] or [[img1]] verbatim. Output ONLY the translation.\(glossaryBlock)\n\n\(source)"
             let body: [String: Any] = [
                 "contents": [["parts": [["text": prompt]]]],
                 "generationConfig": ["temperature": 0.2],
@@ -151,7 +177,7 @@ final class TranslationEngine {
                 "model": cleanModel,
                 "temperature": 0.2,
                 "messages": [
-                    ["role": "system", "content": "Translate into \(targetLanguage). Preserve [[1|...]] and [[img1]] markers verbatim. Output ONLY the translated text."],
+                    ["role": "system", "content": "Translate into \(targetLanguage) (style: \(style)). Preserve [[1|...]] and [[img1]] markers verbatim. Output ONLY the translated text.\(glossaryBlock)"],
                     ["role": "user", "content": source],
                 ],
             ]

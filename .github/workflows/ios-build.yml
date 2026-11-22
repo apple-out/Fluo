@@ -10,6 +10,8 @@ on:
       - "tauri-app/src-tauri/src/content_extract.js"
       - "tauri-app/src-tauri/src/inline_translate.js"
       - "tauri-app/src-tauri/src/inline_restore.js"
+      - "tauri-app/src-tauri/src/find_in_page.js"
+      - "tauri-app/src-tauri/src/region_picker.js"
 
 jobs:
   build-ios:
@@ -59,6 +61,8 @@ jobs:
           cp tauri-app/src-tauri/src/content_extract.js ios/FluoIOS/Scripts/
           cp tauri-app/src-tauri/src/inline_translate.js ios/FluoIOS/Scripts/
           cp tauri-app/src-tauri/src/inline_restore.js ios/FluoIOS/Scripts/
+          cp tauri-app/src-tauri/src/find_in_page.js ios/FluoIOS/Scripts/
+          cp tauri-app/src-tauri/src/region_picker.js ios/FluoIOS/Scripts/
           sips -s format png -z 1024 1024 docs/icon.png --out ios/FluoIOS/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
       - name: Generate Xcode project & build unsigned Fluo.app

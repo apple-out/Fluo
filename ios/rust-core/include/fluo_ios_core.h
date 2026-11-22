@@ -16,6 +16,15 @@ int32_t fluo_load_model(const char *model_path, int32_t n_gpu_layers, uint32_t n
 /// Caller MUST free the returned pointer with fluo_free_string().
 char *fluo_translate_text(const char *text, const char *target_lang, const char *style);
 
+/// Same as fluo_translate_text, with optional glossary rules text (one per line, e.g. "Source -> Target").
+/// Caller MUST free the returned pointer with fluo_free_string().
+char *fluo_translate_with_glossary(
+    const char *text,
+    const char *target_lang,
+    const char *style,
+    const char *glossary_hint
+);
+
 /// Unloads the active GGUF model immediately to free iOS RAM/Metal buffers (call on backgrounding).
 void fluo_unload_model(void);
 

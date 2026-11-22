@@ -70,15 +70,28 @@ fn normalize_target_lang(lang: &str) -> &'static str {
     }
 }
 
-fn build_prompt(model: &LlamaModel, source: &str, target_lang: &str, style: &str) -> String {
+fn build_prompt(
+    model: &LlamaModel,
+    source: &str,
+    target_lang: &str,
+    style: &str,
+    glossary_hint: &str,
+) -> String {
     let target = normalize_target_lang(target_lang);
     let tone_hint = match style.trim().to_ascii_lowercase().as_str() {
         "literal" => "Translate accurately and closely to the source wording.",
-        "novel" => "Use vivid literary prose matching dialogue register.",
-        _ => "Translate naturally and idiomatically.",
+        "novel" => "Use vivid literary prose matching dialogue register and tone.",
+        "polished" => "Translate cleanly in a refined editorial style.",
+        "natural" => "Translate naturally and idiomatically.",
+        _ => "Choose the clearest natural tone fitting the context (auto).",
+    };
+    let glossary_section = if glossary_hint.trim().is_empty() {
+        String::new()
+    } else {
+        format!("\nMandatory Glossary (apply strictly):\n{}\n", glossary_hint.trim())
     };
     let user_prompt = format!(
-        "Translate the following segment into {target}, preserving inline link/media tags like [[1|text]] or [[img1]] verbatim. Output ONLY the translated text.\nStyle: {tone_hint}\n\n{source}"
+        "Translate the following segment into {target}, preserving inline link/media tags like [[1|text]] or [[img1]] verbatim. Output ONLY the translated text.\nStyle: {tone_hint}{glossary_section}\n\n{source}"
     );
     if let Ok(tmpl) = model.chat_template(None) {
         if let Ok(msg) = LlamaChatMessage::new("user".to_string(), user_prompt.clone()) {
@@ -110,11 +123,12 @@ fn translate_with_model(
     source: &str,
     target_lang: &str,
     style: &str,
+    glossary_hint: &str,
 ) -> Result<String, String> {
     if source.trim().is_empty() {
         return Ok(source.to_string());
     }
-    let prompt = build_prompt(&loaded.model, source, target_lang, style);
+    let prompt = build_prompt(&loaded.model, source, target_lang, style, glossary_hint);
     let uses_hy_template = prompt.starts_with("<｜hy_begin▁of▁sentence｜>");
     let vocab = loaded.model.vocab();
     let tokens = vocab.tokenize(prompt.as_bytes(), !uses_hy_template, true);
@@ -246,11 +260,22 @@ pub extern "C" fn fluo_translate_text(
     target_lang: *const c_char,
     style: *const c_char,
 ) -> *mut c_char {
+    fluo_translate_with_glossary(text, target_lang, style, std::ptr::null())
+}
+
+#[no_mangle]
+pub extern "C" fn fluo_translate_with_glossary(
+    text: *const c_char,
+    target_lang: *const c_char,
+    style: *const c_char,
+    glossary_hint: *const c_char,
+) -> *mut c_char {
     let Some(source) = cstr_to_string(text) else {
         return json_err("Invalid UTF-8 text pointer");
     };
     let target = cstr_to_string(target_lang).unwrap_or_else(|| "Korean".to_string());
-    let style_str = cstr_to_string(style).unwrap_or_else(|| "natural".to_string());
+    let style_str = cstr_to_string(style).unwrap_or_else(|| "auto".to_string());
+    let glossary = cstr_to_string(glossary_hint).unwrap_or_default();
 
     let guard = match active_slot().lock() {
         Ok(g) => g,
@@ -260,7 +285,7 @@ pub extern "C" fn fluo_translate_text(
         return json_err("No on-device model loaded");
     };
 
-    match translate_with_model(loaded, &source, &target, &style_str) {
+    match translate_with_model(loaded, &source, &target, &style_str, &glossary) {
         Ok(tr) => json_ok(&tr),
         Err(err) => json_err(&err),
     }
