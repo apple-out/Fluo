@@ -8,69 +8,87 @@ struct OnboardingSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Fluo")
-                            .font(.largeTitle.bold())
-                        Text(t("app.tagline"))
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.indigo)
-                    }
+            ZStack {
+                LiquidAuroraBackground()
 
-                    Text(t("onb.desc"))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        ForEach(AppLanguage.allCases) { lang in
-                            Button {
-                                store.uiLang = lang
-                                store.targetLanguage = lang.defaultTargetLanguage
-                                store.savePreferences()
-                            } label: {
-                                HStack {
-                                    Text(lang.nativeName).fontWeight(.semibold)
-                                    Spacer()
-                                    Text(lang.shortCode)
-                                        .font(.caption.bold())
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(14)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 14)
-                                        .fill(store.uiLang == lang ? Color.indigo.opacity(0.18) : Color(.secondarySystemBackground))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 14)
-                                        .stroke(store.uiLang == lang ? Color.indigo : .clear, lineWidth: 2)
-                                )
-                            }
-                            .buttonStyle(.plain)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Fluo")
+                                .font(.system(size: 36, weight: .heavy, design: .rounded))
+                                .foregroundStyle(FluoThemeTokens.liquidGradient)
+                            Text(t("app.tagline"))
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 5)
+                                .liquidGlassPill(tint: FluoThemeTokens.indigo)
                         }
-                    }
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(t("onb.targetLabel"))
-                            .font(.footnote.weight(.semibold))
-                        TextField(t("onb.targetLabel"), text: $store.targetLanguage)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                        Text(t("onb.desc"))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
 
-                    Button {
-                        store.onboardingCompleted = true
-                        store.savePreferences()
-                        dismiss()
-                    } label: {
-                        Text(t("onb.startBtn"))
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach(AppLanguage.allCases) { lang in
+                                let selected = store.uiLang == lang
+                                Button {
+                                    store.uiLang = lang
+                                    store.targetLanguage = lang.defaultTargetLanguage
+                                    store.savePreferences()
+                                } label: {
+                                    HStack {
+                                        Text(lang.nativeName).fontWeight(.bold)
+                                        Spacer()
+                                        Text(lang.shortCode)
+                                            .font(.caption.bold())
+                                            .foregroundStyle(selected ? .white : .secondary)
+                                    }
+                                    .padding(16)
+                                    .foregroundStyle(selected ? .white : .primary)
+                                    .background {
+                                        if selected {
+                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                                .fill(FluoThemeTokens.liquidGradient)
+                                        }
+                                    }
+                                    .liquidGlass(
+                                        cornerRadius: 18,
+                                        tint: selected ? FluoThemeTokens.indigo : .clear,
+                                        strokeOpacity: selected ? 1.0 : 0.7
+                                    )
+                                }
+                                .buttonStyle(LiquidPressButtonStyle())
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(t("onb.targetLabel"))
+                                .font(.footnote.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            TextField(t("onb.targetLabel"), text: $store.targetLanguage)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 12)
+                                .liquidGlass(cornerRadius: 16)
+                        }
+
+                        Button {
+                            store.onboardingCompleted = true
+                            store.savePreferences()
+                            dismiss()
+                        } label: {
+                            Text(t("onb.startBtn"))
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(FluoThemeTokens.liquidGradient, in: Capsule())
+                                .overlay(Capsule().strokeBorder(.white.opacity(0.45), lineWidth: 1))
+                                .shadow(color: FluoThemeTokens.indigo.opacity(0.45), radius: 14, y: 6)
+                        }
+                        .buttonStyle(LiquidPressButtonStyle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.indigo)
+                    .padding(20)
                 }
-                .padding(20)
             }
             .navigationTitle(t("onb.title"))
             .navigationBarTitleDisplayMode(.inline)
@@ -88,104 +106,196 @@ struct TranslateSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if store.provider == .hyMt2 && !catalog.isInstalled(store.selectedLocalModel) {
-                    Section {
-                        Text(t("tr.needModel"))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        let rec = ModelCatalog.specs[0]
-                        if let pct = catalog.downloadProgress[rec.id] {
-                            ProgressView(value: pct)
-                        } else {
-                            Button(t("tr.downloadRec")) {
-                                catalog.startDownload(rec)
+            ZStack {
+                LiquidAuroraBackground()
+
+                ScrollView {
+                    VStack(spacing: 14) {
+                        if store.provider == .hyMt2 && !catalog.isInstalled(store.selectedLocalModel) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text(t("tr.needModel"))
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                let rec = ModelCatalog.specs[0]
+                                if let pct = catalog.downloadProgress[rec.id] {
+                                    ProgressView(value: pct).tint(FluoThemeTokens.indigo)
+                                } else {
+                                    Button {
+                                        catalog.startDownload(rec)
+                                    } label: {
+                                        Text(t("tr.downloadRec"))
+                                            .font(.subheadline.bold())
+                                            .foregroundStyle(.white)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 11)
+                                            .background(FluoThemeTokens.liquidGradient, in: Capsule())
+                                    }
+                                    .buttonStyle(LiquidPressButtonStyle())
+                                }
+                            }
+                            .padding(16)
+                            .liquidGlass(cornerRadius: 20, tint: FluoThemeTokens.indigo)
+                        }
+
+                        if let err = store.translationError {
+                            Text(err)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .liquidGlass(cornerRadius: 16, tint: .red)
+                        }
+
+                        // 2x2 Control-Center-style Liquid Glass tiles
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            glassActionTile(
+                                title: t("tr.inline"),
+                                icon: "sparkles",
+                                active: store.activeTab.displayMode == .inline
+                            ) {
+                                dismiss()
+                                store.translateActiveTab(bilingual: false)
+                            }
+
+                            glassActionTile(
+                                title: t("tr.bilingual"),
+                                icon: "rectangle.split.2x1",
+                                active: store.activeTab.displayMode == .bilingual
+                            ) {
+                                dismiss()
+                                store.translateActiveTab(bilingual: true)
+                            }
+
+                            glassActionTile(
+                                title: t("tr.regionPicker"),
+                                icon: "hand.tap",
+                                active: store.isPickingRegion
+                            ) {
+                                dismiss()
+                                store.startRegionPicker(bilingual: false)
+                            }
+
+                            glassActionTile(
+                                title: t("tr.selection"),
+                                icon: "text.quote",
+                                active: false
+                            ) {
+                                dismiss()
+                                store.translateSelectedText()
                             }
                         }
-                    }
-                }
 
-                if let err = store.translationError {
-                    Section {
-                        Text(err).font(.footnote).foregroundStyle(.red)
-                    }
-                }
-
-                Section {
-                    Button {
-                        dismiss()
-                        store.translateActiveTab(bilingual: false)
-                    } label: {
-                        Label(t("tr.inline"), systemImage: "sparkles")
-                    }
-
-                    Button {
-                        dismiss()
-                        store.translateActiveTab(bilingual: true)
-                    } label: {
-                        Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
-                    }
-
-                    Button {
-                        dismiss()
-                        store.startRegionPicker(bilingual: false)
-                    } label: {
-                        Label(t("tr.regionPicker"), systemImage: "hand.tap")
-                    }
-
-                    Button {
-                        dismiss()
-                        store.translateSelectedText()
-                    } label: {
-                        Label(t("tr.selection"), systemImage: "text.quote")
-                    }
-
-                    Button {
-                        dismiss()
-                        store.restoreOriginal()
-                    } label: {
-                        Label(t("tr.original"), systemImage: "arrow.uturn.backward")
-                    }
-                }
-
-                Section {
-                    Picker(t("tr.style"), selection: $store.userData.style) {
-                        ForEach(TranslationStyle.allCases) { st in
-                            Text(t("style.\(st.rawValue)")).tag(st)
+                        Button {
+                            dismiss()
+                            store.restoreOriginal()
+                        } label: {
+                            Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .liquidGlassPill()
                         }
-                    }
-                    .onChange(of: store.userData.style) { _ in store.savePreferences() }
+                        .buttonStyle(LiquidPressButtonStyle())
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(t("tr.fontScale"))
-                            Spacer()
-                            Text(String(format: "%.2fx", store.userData.fontScale)).foregroundStyle(.secondary)
+                        // Translation styles & typography card
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(t("tr.style"))
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(TranslationStyle.allCases) { st in
+                                        let active = store.userData.style == st
+                                        Button {
+                                            store.userData.style = st
+                                            store.savePreferences()
+                                        } label: {
+                                            Text(t("style.\(st.rawValue)"))
+                                                .font(.caption.weight(.semibold))
+                                                .padding(.horizontal, 12)
+                                                .padding(.vertical, 7)
+                                                .foregroundStyle(active ? .white : .primary)
+                                                .background {
+                                                    if active {
+                                                        Capsule().fill(FluoThemeTokens.liquidGradient)
+                                                    }
+                                                }
+                                                .liquidGlassPill(tint: active ? FluoThemeTokens.indigo : .clear)
+                                        }
+                                        .buttonStyle(LiquidPressButtonStyle())
+                                    }
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(t("tr.fontScale")).font(.caption.weight(.medium))
+                                    Spacer()
+                                    Text(String(format: "%.2fx", store.userData.fontScale)).font(.caption.monospacedDigit())
+                                }
+                                Slider(value: $store.userData.fontScale, in: 0.8...1.6, step: 0.05)
+                                    .tint(FluoThemeTokens.indigo)
+                                    .onChange(of: store.userData.fontScale) { _ in store.savePreferences() }
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text(t("tr.lineHeight")).font(.caption.weight(.medium))
+                                    Spacer()
+                                    Text(String(format: "%.1f", store.userData.lineHeight)).font(.caption.monospacedDigit())
+                                }
+                                Slider(value: $store.userData.lineHeight, in: 1.2...2.2, step: 0.1)
+                                    .tint(FluoThemeTokens.indigo)
+                                    .onChange(of: store.userData.lineHeight) { _ in store.savePreferences() }
+                            }
+
+                            Button {
+                                openSettings()
+                            } label: {
+                                HStack {
+                                    Label("\(store.provider.rawValue) · \(store.targetLanguage)", systemImage: "slider.horizontal.3")
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .padding(.top, 4)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        Slider(value: $store.userData.fontScale, in: 0.8...1.6, step: 0.05)
-                            .onChange(of: store.userData.fontScale) { _ in store.savePreferences() }
+                        .padding(16)
+                        .liquidGlass(cornerRadius: 22)
                     }
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(t("tr.lineHeight"))
-                            Spacer()
-                            Text(String(format: "%.1f", store.userData.lineHeight)).foregroundStyle(.secondary)
-                        }
-                        Slider(value: $store.userData.lineHeight, in: 1.2...2.2, step: 0.1)
-                            .onChange(of: store.userData.lineHeight) { _ in store.savePreferences() }
-                    }
-
-                    Button {
-                        openSettings()
-                    } label: {
-                        Label("\(store.provider.rawValue) · \(store.targetLanguage)", systemImage: "slider.horizontal.3")
-                    }
+                    .padding(16)
                 }
             }
             .navigationTitle(t("sheet.translateTitle"))
             .navigationBarTitleDisplayMode(.inline)
         }
+    }
+
+    private func glassActionTile(title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(active ? .white : FluoThemeTokens.indigo)
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(active ? .white : .primary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
+            .padding(14)
+            .background {
+                if active {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(FluoThemeTokens.liquidGradient)
+                }
+            }
+            .liquidGlass(cornerRadius: 20, tint: active ? FluoThemeTokens.indigo : .clear)
+        }
+        .buttonStyle(LiquidPressButtonStyle())
     }
 }
 
@@ -200,107 +310,129 @@ struct TabsSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(store.userData.workspaces) { ws in
-                            Button {
-                                store.switchWorkspace(ws.id)
-                            } label: {
-                                Text(ws.name)
-                                    .font(.caption.weight(.semibold))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        store.userData.activeWorkspaceId == ws.id
-                                            ? AnyShapeStyle(Color.indigo)
-                                            : AnyShapeStyle(Color(.secondarySystemBackground)),
-                                        in: Capsule()
-                                    )
-                                    .foregroundStyle(store.userData.activeWorkspaceId == ws.id ? .white : .primary)
-                            }
-                            .contextMenu {
-                                if ws.id != "default" {
-                                    Button(role: .destructive) {
-                                        store.deleteWorkspace(ws.id)
-                                    } label: {
-                                        Label(t("set.delete"), systemImage: "trash")
-                                    }
-                                }
-                            }
-                        }
+            ZStack {
+                LiquidAuroraBackground()
 
-                        Button {
-                            wsDraftName = ""
-                            showNewWorkspace = true
-                        } label: {
-                            Image(systemName: "plus.circle")
-                                .font(.title3)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                }
-
-                List {
-                    ForEach(store.activeWorkspaceTabs) { tab in
-                        HStack {
-                            Button {
-                                store.activeTabId = tab.id
-                                dismiss()
-                            } label: {
-                                HStack(spacing: 8) {
-                                    if tab.isPinned {
-                                        Image(systemName: "pin.fill").foregroundStyle(.indigo).font(.caption)
-                                    }
-                                    if tab.isPrivate {
-                                        Text(t("tabs.privateBadge"))
-                                            .font(.caption2.bold())
-                                            .padding(.horizontal, 6)
-                                            .padding(.vertical, 2)
-                                            .background(Color.purple.opacity(0.2), in: Capsule())
-                                    }
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(tab.title)
-                                            .font(.subheadline.weight(tab.id == store.activeTabId ? .bold : .regular))
-                                            .lineLimit(1)
-                                        Text(tab.urlString)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                            }
-                            .buttonStyle(.plain)
-
-                            Spacer()
-
-                            if !tab.isPinned && store.tabs.count > 1 {
-                                Button(role: .destructive) {
-                                    store.closeTab(tab.id)
+                VStack(spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(store.userData.workspaces) { ws in
+                                let active = store.userData.activeWorkspaceId == ws.id
+                                Button {
+                                    store.switchWorkspace(ws.id)
                                 } label: {
-                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                                    Text(ws.name)
+                                        .font(.caption.weight(.bold))
+                                        .padding(.horizontal, 14)
+                                        .padding(.vertical, 8)
+                                        .foregroundStyle(active ? .white : .primary)
+                                        .background {
+                                            if active {
+                                                Capsule().fill(FluoThemeTokens.liquidGradient)
+                                            }
+                                        }
+                                        .liquidGlassPill(tint: active ? FluoThemeTokens.indigo : .clear)
                                 }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .contextMenu {
-                            Button {
-                                store.togglePinTab(tab.id)
-                            } label: {
-                                Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
+                                .buttonStyle(LiquidPressButtonStyle())
+                                .contextMenu {
+                                    if ws.id != "default" {
+                                        Button(role: .destructive) {
+                                            store.deleteWorkspace(ws.id)
+                                        } label: {
+                                            Label(t("set.delete"), systemImage: "trash")
+                                        }
+                                    }
+                                }
                             }
 
-                            Menu(t("tabs.moveWs")) {
-                                ForEach(store.userData.workspaces) { ws in
-                                    Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
+                            Button {
+                                wsDraftName = ""
+                                showNewWorkspace = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.caption.bold())
+                                    .frame(width: 30, height: 30)
+                                    .liquidGlassPill()
+                            }
+                            .buttonStyle(LiquidPressButtonStyle())
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+                    }
+
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(store.activeWorkspaceTabs) { tab in
+                                let isCurrent = tab.id == store.activeTabId
+                                HStack(spacing: 10) {
+                                    Button {
+                                        store.activeTabId = tab.id
+                                        dismiss()
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            if tab.isPinned {
+                                                Image(systemName: "pin.fill")
+                                                    .foregroundStyle(FluoThemeTokens.indigo)
+                                                    .font(.caption)
+                                            }
+                                            if tab.isPrivate {
+                                                Text(t("tabs.privateBadge"))
+                                                    .font(.caption2.bold())
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 3)
+                                                    .background(FluoThemeTokens.violet.opacity(0.28), in: Capsule())
+                                            }
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(tab.title)
+                                                    .font(.subheadline.weight(isCurrent ? .bold : .medium))
+                                                    .lineLimit(1)
+                                                Text(tab.urlString)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
+                                    .buttonStyle(.plain)
+
+                                    if !tab.isPinned && store.tabs.count > 1 {
+                                        Button(role: .destructive) {
+                                            store.closeTab(tab.id)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(14)
+                                .liquidGlass(
+                                    cornerRadius: 18,
+                                    tint: tab.isPrivate ? FluoThemeTokens.violet : (isCurrent ? FluoThemeTokens.indigo : .clear)
+                                )
+                                .contextMenu {
+                                    Button {
+                                        store.togglePinTab(tab.id)
+                                    } label: {
+                                        Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
+                                    }
+
+                                    Menu(t("tabs.moveWs")) {
+                                        ForEach(store.userData.workspaces) { ws in
+                                            Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
+                                        }
+                                    }
                                 }
                             }
                         }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 20)
                     }
                 }
             }
             .navigationTitle(t("tabs.title"))
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
@@ -337,63 +469,70 @@ struct MenuSheet: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section {
-                    Button {
-                        store.toggleCurrentBookmark()
-                        dismiss()
-                    } label: {
-                        Label(
-                            store.isCurrentPageBookmarked ? t("menu.bookmarkRemove") : t("menu.bookmarkAdd"),
-                            systemImage: store.isCurrentPageBookmarked ? "star.fill" : "star"
-                        )
-                    }
+            ZStack {
+                LiquidAuroraBackground()
 
-                    Button {
-                        dismiss()
-                        store.showFindBar = true
-                    } label: {
-                        Label(t("menu.find"), systemImage: "magnifyingglass")
-                    }
+                ScrollView {
+                    VStack(spacing: 14) {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            quickTile(
+                                title: store.isCurrentPageBookmarked ? t("menu.bookmarkRemove") : t("menu.bookmarkAdd"),
+                                icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
+                                active: store.isCurrentPageBookmarked
+                            ) {
+                                store.toggleCurrentBookmark()
+                                dismiss()
+                            }
 
-                    Button {
-                        store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Label(t("menu.desktop"), systemImage: "desktopcomputer")
-                            Spacer()
-                            if store.activeTab.isDesktopMode {
-                                Image(systemName: "checkmark").foregroundStyle(.indigo)
+                            quickTile(
+                                title: t("menu.find"),
+                                icon: "magnifyingglass",
+                                active: store.showFindBar
+                            ) {
+                                dismiss()
+                                store.showFindBar = true
+                            }
+
+                            quickTile(
+                                title: t("menu.desktop"),
+                                icon: "desktopcomputer",
+                                active: store.activeTab.isDesktopMode
+                            ) {
+                                store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
+                                dismiss()
+                            }
+
+                            quickTile(
+                                title: store.currentHost.isEmpty ? t("menu.adblockSite") : store.currentHost,
+                                icon: "shield.lefthalf.filled",
+                                active: store.isCurrentHostAdBlockEnabled
+                            ) {
+                                if !store.currentHost.isEmpty {
+                                    store.toggleCurrentHostAdBlock()
+                                }
+                                dismiss()
                             }
                         }
-                    }
 
-                    if !store.currentHost.isEmpty {
-                        Button {
-                            store.toggleCurrentHostAdBlock()
-                            dismiss()
-                        } label: {
-                            HStack {
-                                Label("\(t("menu.adblockSite")) (\(store.currentHost))", systemImage: "shield.lefthalf.filled")
-                                Spacer()
-                                Image(systemName: store.isCurrentHostAdBlockEnabled ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(store.isCurrentHostAdBlockEnabled ? .green : .secondary)
-                            }
+                        VStack(spacing: 0) {
+                            menuRow(t("menu.bookmarks"), icon: "book") { openSheet(.bookmarks) }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.history"), icon: "clock") { openSheet(.history) }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.trHistory"), icon: "clock.arrow.2.circlepath") { openSheet(.translationHistory) }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.glossary"), icon: "character.book.closed") { openSheet(.glossary) }
                         }
+                        .liquidGlass(cornerRadius: 22)
+
+                        VStack(spacing: 0) {
+                            menuRow(t("menu.feedback"), icon: "ladybug") { openSheet(.feedback) }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.settings"), icon: "gearshape") { openSheet(.settings) }
+                        }
+                        .liquidGlass(cornerRadius: 22)
                     }
-                }
-
-                Section {
-                    Button { openSheet(.bookmarks) } label: { Label(t("menu.bookmarks"), systemImage: "book") }
-                    Button { openSheet(.history) } label: { Label(t("menu.history"), systemImage: "clock") }
-                    Button { openSheet(.translationHistory) } label: { Label(t("menu.trHistory"), systemImage: "clock.arrow.2.circlepath") }
-                    Button { openSheet(.glossary) } label: { Label(t("menu.glossary"), systemImage: "character.book.closed") }
-                }
-
-                Section {
-                    Button { openSheet(.feedback) } label: { Label(t("menu.feedback"), systemImage: "ladybug") }
-                    Button { openSheet(.settings) } label: { Label(t("menu.settings"), systemImage: "gearshape") }
+                    .padding(16)
                 }
             }
             .navigationTitle(t("menu.title"))
@@ -404,6 +543,46 @@ struct MenuSheet: View {
                 }
             }
         }
+    }
+
+    private func quickTile(title: String, icon: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(active ? .white : FluoThemeTokens.indigo)
+                Text(title)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                    .foregroundStyle(active ? .white : .primary)
+            }
+            .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+            .padding(14)
+            .background {
+                if active {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(FluoThemeTokens.liquidGradient)
+                }
+            }
+            .liquidGlass(cornerRadius: 20, tint: active ? FluoThemeTokens.indigo : .clear)
+        }
+        .buttonStyle(LiquidPressButtonStyle())
+    }
+
+    private func menuRow(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Label(title, systemImage: icon)
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -427,6 +606,7 @@ struct BookmarksSheet: View {
             List {
                 if filtered.isEmpty {
                     Text(t("bm.empty")).foregroundStyle(.secondary)
+                        .listRowBackground(Color.white.opacity(0.06))
                 } else {
                     ForEach(filtered) { item in
                         Button {
@@ -438,12 +618,15 @@ struct BookmarksSheet: View {
                                 Text(item.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
+                        .listRowBackground(Color.white.opacity(0.08))
                         .swipeActions {
                             Button(role: .destructive) { store.deleteBookmark(item.id) } label: { Text(t("set.delete")) }
                         }
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .searchable(text: $search, prompt: t("bm.search"))
             .navigationTitle(t("bm.title"))
             .toolbar {
@@ -466,6 +649,7 @@ struct HistorySheet: View {
             List {
                 if store.userData.history.isEmpty {
                     Text(t("hist.empty")).foregroundStyle(.secondary)
+                        .listRowBackground(Color.white.opacity(0.06))
                 } else {
                     ForEach(store.userData.history) { entry in
                         Button {
@@ -477,9 +661,12 @@ struct HistorySheet: View {
                                 Text(entry.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
+                        .listRowBackground(Color.white.opacity(0.08))
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("hist.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -506,6 +693,7 @@ struct TranslationHistorySheet: View {
             List {
                 if store.userData.translationHistory.isEmpty {
                     Text(t("trhist.empty")).foregroundStyle(.secondary)
+                        .listRowBackground(Color.white.opacity(0.06))
                 } else {
                     ForEach(store.userData.translationHistory) { item in
                         Button {
@@ -515,13 +703,16 @@ struct TranslationHistorySheet: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
                                 Text("\(item.targetLanguage) · \(item.provider)")
-                                    .font(.caption).foregroundStyle(.indigo)
+                                    .font(.caption).foregroundStyle(FluoThemeTokens.indigo)
                                 Text(item.url).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             }
                         }
+                        .listRowBackground(Color.white.opacity(0.08))
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("trhist.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -556,6 +747,7 @@ struct GlossarySheet: View {
                     }
                     .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .listRowBackground(Color.white.opacity(0.08))
 
                 Section {
                     if store.userData.glossary.isEmpty {
@@ -578,7 +770,10 @@ struct GlossarySheet: View {
                         }
                     }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("gl.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -601,6 +796,8 @@ struct SelectionResultSheet: View {
                 Section {
                     Text(store.selectionSourceText).font(.subheadline).foregroundStyle(.secondary)
                 }
+                .listRowBackground(Color.white.opacity(0.08))
+
                 Section {
                     if store.selectionTranslatedText.isEmpty {
                         HStack(spacing: 8) {
@@ -618,7 +815,10 @@ struct SelectionResultSheet: View {
                         }
                     }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("sel.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -674,6 +874,7 @@ struct FeedbackSheet: View {
                     TextEditor(text: $details).frame(minHeight: 110)
                     Toggle(t("fb.includeDiag"), isOn: $includeDiag)
                 }
+                .listRowBackground(Color.white.opacity(0.08))
 
                 Section {
                     Button(t("fb.openGithub")) {
@@ -688,7 +889,10 @@ struct FeedbackSheet: View {
                         UIPasteboard.general.string = markdownReport
                     }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("fb.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -727,6 +931,7 @@ struct SettingsSheet: View {
                     TextField(t("set.targetLang"), text: $store.targetLanguage)
                         .onChange(of: store.targetLanguage) { _ in store.savePreferences() }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
 
                 Section(t("set.browserSection")) {
                     Picker(t("set.searchEngine"), selection: $store.userData.searchEngine) {
@@ -764,6 +969,7 @@ struct SettingsSheet: View {
                             get: { store.activeTab.pageZoom },
                             set: { store.activeTab.applyPageZoom($0) }
                         ), in: 0.7...1.8, step: 0.1)
+                        .tint(FluoThemeTokens.indigo)
                     }
 
                     Button(t("set.clearSiteData"), role: .destructive) {
@@ -773,6 +979,7 @@ struct SettingsSheet: View {
                         }
                     }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
 
                 Section(t("set.aiSection")) {
                     Picker(t("set.provider"), selection: $store.provider) {
@@ -782,6 +989,7 @@ struct SettingsSheet: View {
                     }
                     .onChange(of: store.provider) { _ in store.savePreferences() }
                 }
+                .listRowBackground(Color.white.opacity(0.08))
 
                 if store.provider == .hyMt2 {
                     Section {
@@ -796,7 +1004,7 @@ struct SettingsSheet: View {
 
                                 if let pct = catalog.downloadProgress[spec.id] {
                                     HStack {
-                                        ProgressView(value: pct)
+                                        ProgressView(value: pct).tint(FluoThemeTokens.indigo)
                                         Button(t("set.cancel")) { catalog.cancelDownload(spec.id) }
                                             .font(.caption)
                                     }
@@ -821,7 +1029,8 @@ struct SettingsSheet: View {
                                     Button(t("set.download")) {
                                         catalog.startDownload(spec)
                                     }
-                                    .buttonStyle(.bordered)
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(FluoThemeTokens.indigo)
                                 }
                             }
                             .padding(.vertical, 4)
@@ -839,6 +1048,7 @@ struct SettingsSheet: View {
                     } header: {
                         Text(t("set.modelsSection"))
                     }
+                    .listRowBackground(Color.white.opacity(0.08))
                 } else if store.provider == .googleGemini {
                     Section(t("set.provider.gemini")) {
                         SecureField(t("set.apiKey"), text: $geminiKeyDraft)
@@ -855,6 +1065,7 @@ struct SettingsSheet: View {
                             }
                         }
                     }
+                    .listRowBackground(Color.white.opacity(0.08))
                 } else {
                     Section(t("set.provider.openai")) {
                         TextField(t("set.baseUrl"), text: $store.openAiBaseUrl)
@@ -876,8 +1087,11 @@ struct SettingsSheet: View {
                             }
                         }
                     }
+                    .listRowBackground(Color.white.opacity(0.08))
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
             .navigationTitle(t("set.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
