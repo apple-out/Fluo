@@ -15,12 +15,43 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Select Xcode 26+ (iOS 26 SDK)
+        run: |
+          ls -d /Applications/Xcode*.app || true
+          SELECTED="$(python3 - <<'PY'
+          import glob, subprocess, sys
+          best = None
+          for app in sorted(glob.glob('/Applications/Xcode*.app')):
+              try:
+                  ver = subprocess.check_output(
+                      [f'{app}/Contents/Developer/usr/bin/xcrun', '--sdk', 'iphoneos', '--show-sdk-version'],
+                      text=True
+                  ).strip()
+                  parts = tuple(int(x) for x in ver.split('.') if x.isdigit())
+                  print(f'Candidate {app} -> iphoneos {ver}', file=sys.stderr, flush=True)
+                  if parts and parts[0] >= 26:
+                      if best is None or parts > best[0]:
+                          best = (parts, app)
+              except Exception as exc:
+                  print(f'Skipping {app}: {exc}', file=sys.stderr, flush=True)
+          if best:
+              print(best[1], end='')
+          PY
+          )"
+          if [ -z "$SELECTED" ]; then
+            echo "::error::No Xcode with iOS 26+ SDK found on runner"
+            exit 1
+          fi
+          sudo xcode-select -s "$SELECTED/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
 
       - name: Install Rust iOS target & build tools
         run: |
@@ -34,9 +65,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ios/rust-core/target
-          key: fluo-ios-rust-${{ runner.os }}-${{ hashFiles('ios/rust-core/Cargo.toml', 'ios/rust-core/src/**') }}
+          key: fluo-ios-rust-sdk26-${{ runner.os }}-${{ hashFiles('ios/rust-core/Cargo.toml', 'ios/rust-core/src/**') }}
           restore-keys: |
-            fluo-ios-rust-${{ runner.os }}-
+            fluo-ios-rust-sdk26-${{ runner.os }}-
 
       - name: Build Rust inference static library (aarch64-apple-ios + Metal)
         working-directory: ios/rust-core

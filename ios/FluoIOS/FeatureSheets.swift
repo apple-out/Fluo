@@ -28,36 +28,34 @@ struct OnboardingSheet: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                            ForEach(AppLanguage.allCases) { lang in
-                                let selected = store.uiLang == lang
-                                Button {
-                                    store.uiLang = lang
-                                    store.targetLanguage = lang.defaultTargetLanguage
-                                    store.savePreferences()
-                                } label: {
-                                    HStack {
-                                        Text(lang.nativeName).fontWeight(.bold)
-                                        Spacer()
-                                        Text(lang.shortCode)
-                                            .font(.caption.bold())
-                                            .foregroundStyle(selected ? .white : .secondary)
-                                    }
-                                    .padding(16)
-                                    .foregroundStyle(selected ? .white : .primary)
-                                    .background {
-                                        if selected {
-                                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                                .fill(FluoThemeTokens.liquidGradient)
+                        LiquidGlassGroup(spacing: 12) {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                                ForEach(AppLanguage.allCases) { lang in
+                                    let selected = store.uiLang == lang
+                                    Button {
+                                        store.uiLang = lang
+                                        store.targetLanguage = lang.defaultTargetLanguage
+                                        store.savePreferences()
+                                    } label: {
+                                        HStack {
+                                            Text(lang.nativeName).fontWeight(.bold)
+                                            Spacer()
+                                            Text(lang.shortCode)
+                                                .font(.caption.bold())
+                                                .foregroundStyle(selected ? .white : .secondary)
                                         }
+                                        .padding(16)
+                                        .foregroundStyle(selected ? .white : .primary)
+                                        .liquidGlass(
+                                            cornerRadius: 18,
+                                            tint: selected ? FluoThemeTokens.indigo : .clear,
+                                            strokeOpacity: selected ? 1.0 : 0.7,
+                                            interactive: true,
+                                            prominent: selected
+                                        )
                                     }
-                                    .liquidGlass(
-                                        cornerRadius: 18,
-                                        tint: selected ? FluoThemeTokens.indigo : .clear,
-                                        strokeOpacity: selected ? 1.0 : 0.7
-                                    )
+                                    .buttonStyle(LiquidPressButtonStyle())
                                 }
-                                .buttonStyle(LiquidPressButtonStyle())
                             }
                         }
 
@@ -68,7 +66,7 @@ struct OnboardingSheet: View {
                             TextField(t("onb.targetLabel"), text: $store.targetLanguage)
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 12)
-                                .liquidGlass(cornerRadius: 16)
+                                .liquidGlass(cornerRadius: 16, interactive: true)
                         }
 
                         Button {
@@ -81,9 +79,7 @@ struct OnboardingSheet: View {
                                 .foregroundStyle(.white)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 14)
-                                .background(FluoThemeTokens.liquidGradient, in: Capsule())
-                                .overlay(Capsule().strokeBorder(.white.opacity(0.45), lineWidth: 1))
-                                .shadow(color: FluoThemeTokens.indigo.opacity(0.45), radius: 14, y: 6)
+                                .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
                         }
                         .buttonStyle(LiquidPressButtonStyle())
                     }
@@ -128,7 +124,7 @@ struct TranslateSheet: View {
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 11)
-                                            .background(FluoThemeTokens.liquidGradient, in: Capsule())
+                                            .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
                                 }
@@ -147,41 +143,43 @@ struct TranslateSheet: View {
                         }
 
                         // 2x2 Control-Center-style Liquid Glass tiles
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            glassActionTile(
-                                title: t("tr.inline"),
-                                icon: "sparkles",
-                                active: store.activeTab.displayMode == .inline
-                            ) {
-                                dismiss()
-                                store.translateActiveTab(bilingual: false)
-                            }
+                        LiquidGlassGroup(spacing: 10) {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                glassActionTile(
+                                    title: t("tr.inline"),
+                                    icon: "sparkles",
+                                    active: store.activeTab.displayMode == .inline
+                                ) {
+                                    dismiss()
+                                    store.translateActiveTab(bilingual: false)
+                                }
 
-                            glassActionTile(
-                                title: t("tr.bilingual"),
-                                icon: "rectangle.split.2x1",
-                                active: store.activeTab.displayMode == .bilingual
-                            ) {
-                                dismiss()
-                                store.translateActiveTab(bilingual: true)
-                            }
+                                glassActionTile(
+                                    title: t("tr.bilingual"),
+                                    icon: "rectangle.split.2x1",
+                                    active: store.activeTab.displayMode == .bilingual
+                                ) {
+                                    dismiss()
+                                    store.translateActiveTab(bilingual: true)
+                                }
 
-                            glassActionTile(
-                                title: t("tr.regionPicker"),
-                                icon: "hand.tap",
-                                active: store.isPickingRegion
-                            ) {
-                                dismiss()
-                                store.startRegionPicker(bilingual: false)
-                            }
+                                glassActionTile(
+                                    title: t("tr.regionPicker"),
+                                    icon: "hand.tap",
+                                    active: store.isPickingRegion
+                                ) {
+                                    dismiss()
+                                    store.startRegionPicker(bilingual: false)
+                                }
 
-                            glassActionTile(
-                                title: t("tr.selection"),
-                                icon: "text.quote",
-                                active: false
-                            ) {
-                                dismiss()
-                                store.translateSelectedText()
+                                glassActionTile(
+                                    title: t("tr.selection"),
+                                    icon: "text.quote",
+                                    active: false
+                                ) {
+                                    dismiss()
+                                    store.translateSelectedText()
+                                }
                             }
                         }
 
@@ -193,7 +191,7 @@ struct TranslateSheet: View {
                                 .font(.subheadline.weight(.semibold))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .liquidGlassPill()
+                                .liquidGlassPill(interactive: true)
                         }
                         .buttonStyle(LiquidPressButtonStyle())
 
@@ -204,26 +202,27 @@ struct TranslateSheet: View {
                                 .foregroundStyle(.secondary)
 
                             ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 8) {
-                                    ForEach(TranslationStyle.allCases) { st in
-                                        let active = store.userData.style == st
-                                        Button {
-                                            store.userData.style = st
-                                            store.savePreferences()
-                                        } label: {
-                                            Text(t("style.\(st.rawValue)"))
-                                                .font(.caption.weight(.semibold))
-                                                .padding(.horizontal, 12)
-                                                .padding(.vertical, 7)
-                                                .foregroundStyle(active ? .white : .primary)
-                                                .background {
-                                                    if active {
-                                                        Capsule().fill(FluoThemeTokens.liquidGradient)
-                                                    }
-                                                }
-                                                .liquidGlassPill(tint: active ? FluoThemeTokens.indigo : .clear)
+                                LiquidGlassGroup(spacing: 8) {
+                                    HStack(spacing: 8) {
+                                        ForEach(TranslationStyle.allCases) { st in
+                                            let active = store.userData.style == st
+                                            Button {
+                                                store.userData.style = st
+                                                store.savePreferences()
+                                            } label: {
+                                                Text(t("style.\(st.rawValue)"))
+                                                    .font(.caption.weight(.semibold))
+                                                    .padding(.horizontal, 12)
+                                                    .padding(.vertical, 7)
+                                                    .foregroundStyle(active ? .white : .primary)
+                                                    .liquidGlassPill(
+                                                        tint: active ? FluoThemeTokens.indigo : .clear,
+                                                        interactive: true,
+                                                        prominent: active
+                                                    )
+                                            }
+                                            .buttonStyle(LiquidPressButtonStyle())
                                         }
-                                        .buttonStyle(LiquidPressButtonStyle())
                                     }
                                 }
                             }
@@ -288,12 +287,12 @@ struct TranslateSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 84, alignment: .topLeading)
             .padding(14)
-            .background {
-                if active {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(FluoThemeTokens.liquidGradient)
-                }
-            }
-            .liquidGlass(cornerRadius: 20, tint: active ? FluoThemeTokens.indigo : .clear)
+            .liquidGlass(
+                cornerRadius: 20,
+                tint: active ? FluoThemeTokens.indigo : .clear,
+                interactive: true,
+                prominent: active
+            )
         }
         .buttonStyle(LiquidPressButtonStyle())
     }
@@ -315,46 +314,47 @@ struct TabsSheet: View {
 
                 VStack(spacing: 10) {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(store.userData.workspaces) { ws in
-                                let active = store.userData.activeWorkspaceId == ws.id
-                                Button {
-                                    store.switchWorkspace(ws.id)
-                                } label: {
-                                    Text(ws.name)
-                                        .font(.caption.weight(.bold))
-                                        .padding(.horizontal, 14)
-                                        .padding(.vertical, 8)
-                                        .foregroundStyle(active ? .white : .primary)
-                                        .background {
-                                            if active {
-                                                Capsule().fill(FluoThemeTokens.liquidGradient)
+                        LiquidGlassGroup(spacing: 8) {
+                            HStack(spacing: 8) {
+                                ForEach(store.userData.workspaces) { ws in
+                                    let active = store.userData.activeWorkspaceId == ws.id
+                                    Button {
+                                        store.switchWorkspace(ws.id)
+                                    } label: {
+                                        Text(ws.name)
+                                            .font(.caption.weight(.bold))
+                                            .padding(.horizontal, 14)
+                                            .padding(.vertical, 8)
+                                            .foregroundStyle(active ? .white : .primary)
+                                            .liquidGlassPill(
+                                                tint: active ? FluoThemeTokens.indigo : .clear,
+                                                interactive: true,
+                                                prominent: active
+                                            )
+                                    }
+                                    .buttonStyle(LiquidPressButtonStyle())
+                                    .contextMenu {
+                                        if ws.id != "default" {
+                                            Button(role: .destructive) {
+                                                store.deleteWorkspace(ws.id)
+                                            } label: {
+                                                Label(t("set.delete"), systemImage: "trash")
                                             }
-                                        }
-                                        .liquidGlassPill(tint: active ? FluoThemeTokens.indigo : .clear)
-                                }
-                                .buttonStyle(LiquidPressButtonStyle())
-                                .contextMenu {
-                                    if ws.id != "default" {
-                                        Button(role: .destructive) {
-                                            store.deleteWorkspace(ws.id)
-                                        } label: {
-                                            Label(t("set.delete"), systemImage: "trash")
                                         }
                                     }
                                 }
-                            }
 
-                            Button {
-                                wsDraftName = ""
-                                showNewWorkspace = true
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.caption.bold())
-                                    .frame(width: 30, height: 30)
-                                    .liquidGlassPill()
+                                Button {
+                                    wsDraftName = ""
+                                    showNewWorkspace = true
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.caption.bold())
+                                        .frame(width: 30, height: 30)
+                                        .liquidGlassPill(interactive: true)
+                                }
+                                .buttonStyle(LiquidPressButtonStyle())
                             }
-                            .buttonStyle(LiquidPressButtonStyle())
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
@@ -474,43 +474,45 @@ struct MenuSheet: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                            quickTile(
-                                title: store.isCurrentPageBookmarked ? t("menu.bookmarkRemove") : t("menu.bookmarkAdd"),
-                                icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
-                                active: store.isCurrentPageBookmarked
-                            ) {
-                                store.toggleCurrentBookmark()
-                                dismiss()
-                            }
-
-                            quickTile(
-                                title: t("menu.find"),
-                                icon: "magnifyingglass",
-                                active: store.showFindBar
-                            ) {
-                                dismiss()
-                                store.showFindBar = true
-                            }
-
-                            quickTile(
-                                title: t("menu.desktop"),
-                                icon: "desktopcomputer",
-                                active: store.activeTab.isDesktopMode
-                            ) {
-                                store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
-                                dismiss()
-                            }
-
-                            quickTile(
-                                title: store.currentHost.isEmpty ? t("menu.adblockSite") : store.currentHost,
-                                icon: "shield.lefthalf.filled",
-                                active: store.isCurrentHostAdBlockEnabled
-                            ) {
-                                if !store.currentHost.isEmpty {
-                                    store.toggleCurrentHostAdBlock()
+                        LiquidGlassGroup(spacing: 10) {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                quickTile(
+                                    title: store.isCurrentPageBookmarked ? t("menu.bookmarkRemove") : t("menu.bookmarkAdd"),
+                                    icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
+                                    active: store.isCurrentPageBookmarked
+                                ) {
+                                    store.toggleCurrentBookmark()
+                                    dismiss()
                                 }
-                                dismiss()
+
+                                quickTile(
+                                    title: t("menu.find"),
+                                    icon: "magnifyingglass",
+                                    active: store.showFindBar
+                                ) {
+                                    dismiss()
+                                    store.showFindBar = true
+                                }
+
+                                quickTile(
+                                    title: t("menu.desktop"),
+                                    icon: "desktopcomputer",
+                                    active: store.activeTab.isDesktopMode
+                                ) {
+                                    store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
+                                    dismiss()
+                                }
+
+                                quickTile(
+                                    title: store.currentHost.isEmpty ? t("menu.adblockSite") : store.currentHost,
+                                    icon: "shield.lefthalf.filled",
+                                    active: store.isCurrentHostAdBlockEnabled
+                                ) {
+                                    if !store.currentHost.isEmpty {
+                                        store.toggleCurrentHostAdBlock()
+                                    }
+                                    dismiss()
+                                }
                             }
                         }
 
@@ -558,12 +560,12 @@ struct MenuSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
             .padding(14)
-            .background {
-                if active {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous).fill(FluoThemeTokens.liquidGradient)
-                }
-            }
-            .liquidGlass(cornerRadius: 20, tint: active ? FluoThemeTokens.indigo : .clear)
+            .liquidGlass(
+                cornerRadius: 20,
+                tint: active ? FluoThemeTokens.indigo : .clear,
+                interactive: true,
+                prominent: active
+            )
         }
         .buttonStyle(LiquidPressButtonStyle())
     }

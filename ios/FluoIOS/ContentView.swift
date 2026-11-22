@@ -69,7 +69,7 @@ struct ContentView: View {
                         .font(.caption.bold())
                         .padding(.horizontal, 10)
                         .padding(.vertical, 5)
-                        .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -98,7 +98,7 @@ struct ContentView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
-                .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true)
                 .padding(.bottom, 84)
             }
 
@@ -188,115 +188,109 @@ struct ContentView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .liquidGlassPill()
+        .liquidGlassPill(interactive: true)
     }
 
     private var bottomDock: some View {
-        HStack(spacing: 8) {
-            Button {
-                store.activeTab.webView.goBack()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 32, height: 32)
-                    .background(.white.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(LiquidPressButtonStyle())
-            .disabled(!store.activeTab.canGoBack)
-            .opacity(store.activeTab.canGoBack ? 1.0 : 0.4)
-
-            Button {
-                store.activeTab.webView.goForward()
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 32, height: 32)
-                    .background(.white.opacity(0.08), in: Circle())
-            }
-            .buttonStyle(LiquidPressButtonStyle())
-            .disabled(!store.activeTab.canGoForward)
-            .opacity(store.activeTab.canGoForward ? 1.0 : 0.4)
-
+        LiquidGlassGroup(spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: store.activeTab.isPrivate ? "eye.slash.fill" : (store.isCurrentHostAdBlockEnabled ? "shield.checkered" : "globe"))
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(store.activeTab.isPrivate ? FluoThemeTokens.violet : FluoThemeTokens.indigo)
-
-                TextField(t("bar.urlPlaceholder"), text: $urlDraft)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .submitLabel(.go)
-                    .font(.subheadline)
-                    .onSubmit {
-                        store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
-                    }
+                Button {
+                    store.activeTab.webView.goBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .liquidGlassCircle(interactive: true)
+                }
+                .buttonStyle(LiquidPressButtonStyle())
+                .disabled(!store.activeTab.canGoBack)
+                .opacity(store.activeTab.canGoBack ? 1.0 : 0.4)
 
                 Button {
-                    if store.activeTab.isLoading {
-                        store.activeTab.webView.stopLoading()
-                    } else {
-                        store.activeTab.webView.reload()
-                    }
+                    store.activeTab.webView.goForward()
                 } label: {
-                    Image(systemName: store.activeTab.isLoading ? "xmark" : "arrow.clockwise")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 34, height: 34)
+                        .liquidGlassCircle(interactive: true)
                 }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
-            .background {
-                Capsule().fill(.thinMaterial)
-            }
-            .overlay(
-                Capsule().strokeBorder(.white.opacity(0.24), lineWidth: 0.7)
-            )
+                .buttonStyle(LiquidPressButtonStyle())
+                .disabled(!store.activeTab.canGoForward)
+                .opacity(store.activeTab.canGoForward ? 1.0 : 0.4)
 
-            Button {
-                activeSheet = .translate
-            } label: {
-                Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
-                    .frame(width: 34, height: 34)
-                    .background {
-                        if store.activeTab.displayMode == .original {
-                            Circle().fill(.white.opacity(0.10))
-                        } else {
-                            Circle().fill(FluoThemeTokens.liquidGradient)
+                HStack(spacing: 6) {
+                    Image(systemName: store.activeTab.isPrivate ? "eye.slash.fill" : (store.isCurrentHostAdBlockEnabled ? "shield.checkered" : "globe"))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(store.activeTab.isPrivate ? FluoThemeTokens.violet : FluoThemeTokens.indigo)
+
+                    TextField(t("bar.urlPlaceholder"), text: $urlDraft)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .submitLabel(.go)
+                        .font(.subheadline)
+                        .onSubmit {
+                            store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
                         }
+
+                    Button {
+                        if store.activeTab.isLoading {
+                            store.activeTab.webView.stopLoading()
+                        } else {
+                            store.activeTab.webView.reload()
+                        }
+                    } label: {
+                        Image(systemName: store.activeTab.isLoading ? "xmark" : "arrow.clockwise")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
                     }
-                    .overlay(Circle().strokeBorder(.white.opacity(0.32), lineWidth: 0.8))
-            }
-            .buttonStyle(LiquidPressButtonStyle())
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .liquidGlassPill(
+                    tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear,
+                    interactive: true
+                )
 
-            Button {
-                activeSheet = .tabs
-            } label: {
-                Text("\(store.activeWorkspaceTabs.count)")
-                    .font(.caption.bold())
-                    .frame(width: 30, height: 30)
-                    .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.white.opacity(0.34), lineWidth: 1))
-            }
-            .buttonStyle(LiquidPressButtonStyle())
+                Button {
+                    activeSheet = .translate
+                } label: {
+                    Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
+                        .frame(width: 36, height: 36)
+                        .liquidGlassCircle(
+                            tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
+                            interactive: true,
+                            prominent: store.activeTab.displayMode != .original
+                        )
+                }
+                .buttonStyle(LiquidPressButtonStyle())
 
-            Button {
-                activeSheet = .menu
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .bold))
-                    .frame(width: 32, height: 32)
-                    .background(.white.opacity(0.10), in: Circle())
+                Button {
+                    activeSheet = .tabs
+                } label: {
+                    Text("\(store.activeWorkspaceTabs.count)")
+                        .font(.caption.bold())
+                        .frame(width: 32, height: 32)
+                        .liquidGlass(cornerRadius: 11, interactive: true)
+                }
+                .buttonStyle(LiquidPressButtonStyle())
+
+                Button {
+                    activeSheet = .menu
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 15, weight: .bold))
+                        .frame(width: 34, height: 34)
+                        .liquidGlassCircle(interactive: true)
+                }
+                .buttonStyle(LiquidPressButtonStyle())
             }
-            .buttonStyle(LiquidPressButtonStyle())
         }
+        .liquidGlassDockChrome(tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear)
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .liquidGlass(cornerRadius: 30, tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear)
-        .padding(.horizontal, 10)
         .padding(.bottom, 6)
     }
 }
