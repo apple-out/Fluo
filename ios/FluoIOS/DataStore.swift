@@ -87,6 +87,10 @@ struct GlossaryItem: Identifiable, Codable, Hashable {
     var caseSensitive: Bool
     var folder: String = "Default"
     var enabled: Bool = true
+    var exactMatch: Bool = false
+    var useRegex: Bool = false
+    var doNotTranslate: Bool = false
+    var note: String = ""
 
     init(
         id: String,
@@ -94,7 +98,11 @@ struct GlossaryItem: Identifiable, Codable, Hashable {
         target: String,
         caseSensitive: Bool,
         folder: String = "Default",
-        enabled: Bool = true
+        enabled: Bool = true,
+        exactMatch: Bool = false,
+        useRegex: Bool = false,
+        doNotTranslate: Bool = false,
+        note: String = ""
     ) {
         self.id = id
         self.source = source
@@ -102,6 +110,10 @@ struct GlossaryItem: Identifiable, Codable, Hashable {
         self.caseSensitive = caseSensitive
         self.folder = folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : folder
         self.enabled = enabled
+        self.exactMatch = exactMatch
+        self.useRegex = useRegex
+        self.doNotTranslate = doNotTranslate
+        self.note = note
     }
 
     init(from decoder: Decoder) throws {
@@ -113,7 +125,45 @@ struct GlossaryItem: Identifiable, Codable, Hashable {
         let rawFolder = try c.decodeIfPresent(String.self, forKey: .folder) ?? "Default"
         folder = rawFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : rawFolder
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        exactMatch = try c.decodeIfPresent(Bool.self, forKey: .exactMatch) ?? false
+        useRegex = try c.decodeIfPresent(Bool.self, forKey: .useRegex) ?? false
+        doNotTranslate = try c.decodeIfPresent(Bool.self, forKey: .doNotTranslate) ?? false
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
     }
+}
+
+struct SavedTabItem: Identifiable, Codable, Hashable {
+    var id: String
+    var urlString: String
+    var title: String
+    var workspaceId: String
+    var isPinned: Bool
+}
+
+struct QuickShortcutItem: Identifiable, Codable, Hashable {
+    var id: String
+    var title: String
+    var urlString: String
+    var icon: String
+    var tintHex: String
+
+    static let defaults: [QuickShortcutItem] = [
+        QuickShortcutItem(id: "namu", title: "나무위키", urlString: "https://namu.wiki", icon: "book.pages.fill", tintHex: "#00A495"),
+        QuickShortcutItem(id: "wikipedia", title: "Wikipedia", urlString: "https://en.wikipedia.org", icon: "globe.americas.fill", tintHex: "#3B82F6"),
+        QuickShortcutItem(id: "nhk", title: "NHK News", urlString: "https://www3.nhk.or.jp/news/", icon: "newspaper.fill", tintHex: "#EC4899"),
+        QuickShortcutItem(id: "hackernews", title: "Hacker News", urlString: "https://news.ycombinator.com", icon: "bolt.horizontal.circle.fill", tintHex: "#F97316"),
+        QuickShortcutItem(id: "syosetu", title: "小説家になろう", urlString: "https://syosetu.com", icon: "text.book.closed.fill", tintHex: "#8B5CF6"),
+        QuickShortcutItem(id: "github", title: "GitHub", urlString: "https://github.com/trending", icon: "chevron.left.forwardslash.chevron.right", tintHex: "#10B981"),
+    ]
+}
+
+struct DownloadItemRecord: Identifiable, Codable, Hashable {
+    var id: String
+    var fileName: String
+    var sourceURL: String
+    var localPath: String
+    var byteSize: Int64
+    var createdAt: Date
 }
 
 struct FluoUserDataSnapshot: Codable {
@@ -133,6 +183,13 @@ struct FluoUserDataSnapshot: Codable {
     var lineHeight: Double = 1.6
     var adBlockEnabled: Bool = true
     var adBlockAllowlist: [String] = []
+    var savedTabs: [SavedTabItem] = []
+    var activeSavedTabId: String? = nil
+    var customShortcuts: [QuickShortcutItem] = QuickShortcutItem.defaults
+    var downloads: [DownloadItemRecord] = []
+    var autoTranslateEnabled: Bool = true
+    var autoTranslateHosts: [String] = []
+    var neverTranslateHosts: [String] = []
 
     init() {}
 
@@ -160,6 +217,32 @@ struct FluoUserDataSnapshot: Codable {
         lineHeight = try c.decodeIfPresent(Double.self, forKey: .lineHeight) ?? def.lineHeight
         adBlockEnabled = try c.decodeIfPresent(Bool.self, forKey: .adBlockEnabled) ?? def.adBlockEnabled
         adBlockAllowlist = try c.decodeIfPresent([String].self, forKey: .adBlockAllowlist) ?? def.adBlockAllowlist
+        savedTabs = try c.decodeIfPresent([SavedTabItem].self, forKey: .savedTabs) ?? []
+        activeSavedTabId = try c.decodeIfPresent(String.self, forKey: .activeSavedTabId)
+        customShortcuts = try c.decodeIfPresent([QuickShortcutItem].self, forKey: .customShortcuts) ?? QuickShortcutItem.defaults
+        downloads = try c.decodeIfPresent([DownloadItemRecord].self, forKey: .downloads) ?? []
+        autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
+        autoTranslateHosts = try c.decodeIfPresent([String].self, forKey: .autoTranslateHosts) ?? []
+        neverTranslateHosts = try c.decodeIfPresent([String].self, forKey: .neverTranslateHosts) ?? []
+    }
+
+    func exportJSONString() -> String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func importJSONString(_ raw: String) -> FluoUserDataSnapshot? {
+        guard let data = raw.data(using: .utf8),
+              var decoded = try? JSONDecoder().decode(FluoUserDataSnapshot.self, from: data) else {
+            return nil
+        }
+        if decoded.workspaces.isEmpty {
+            decoded.workspaces = [WorkspaceItem(id: "default", name: "General")]
+            decoded.activeWorkspaceId = "default"
+        }
+        return decoded
     }
 
     private static var fileURL: URL {

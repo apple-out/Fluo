@@ -257,7 +257,7 @@ export interface FindResult {
 }
 
 export interface AddressSuggestion {
-  kind: "bookmark" | "history" | "search";
+  kind: "bookmark" | "history" | "search" | "calc" | "tab";
   title: string;
   url: string;
 }

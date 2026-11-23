@@ -50,13 +50,27 @@
   }
   const scale = Number.isFinite(fontScale) && fontScale > 0.5 ? fontScale : 1.0;
   const lh = Number.isFinite(lineHeight) && lineHeight > 1.0 ? lineHeight : 1.6;
-  const scaleCss = Math.abs(scale - 1.0) > 0.01 ? `font-size:${(scale * 100).toFixed(0)}%!important;` : "";
-  style.textContent =
-    `[data-rb-inline-key][hidden]{display:none!important}` +
-    `[data-rb-inline-translation-for]{${scaleCss}line-height:${lh.toFixed(2)}!important;white-space:pre-wrap!important}` +
-    `[data-rb-inline-bilingual="1"]{margin-top:4px;padding:3px 0 3px 9px;border-left:2.5px solid var(--rb-accent, #684cff);opacity:0.94;font-weight:normal}` +
-    `[data-rb-uncertain="1"]{border-left:2.5px solid #f59e0b;padding-left:7px}` +
-    `[data-rb-inline-translation-for] [data-rb-cloned-media="1"]{position:static!important;inset:auto!important;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;float:none!important;transform:none!important;max-width:100%!important;vertical-align:middle!important}`;
+  function buildInlineCss(s, l) {
+    const sc = Math.abs(s - 1.0) > 0.01 ? `font-size:${(s * 100).toFixed(0)}%!important;` : "";
+    return (
+      `[data-rb-inline-key][hidden]{display:none!important}` +
+      `[data-rb-inline-translation-for]{${sc}line-height:${l.toFixed(2)}!important;white-space:pre-wrap!important;transition:background-color 0.2s ease,box-shadow 0.2s ease}` +
+      `[data-rb-inline-bilingual="1"]{margin-top:4px;padding:3px 0 3px 9px;border-left:2.5px solid var(--rb-accent, #684cff);opacity:0.94;font-weight:normal}` +
+      `[data-rb-uncertain="1"]{border-left:2.5px solid #f59e0b;padding-left:7px}` +
+      `[data-rb-tts-active="1"]{background:color-mix(in srgb, var(--rb-accent, #684cff) 16%, transparent)!important;box-shadow:0 0 0 2px color-mix(in srgb, var(--rb-accent, #684cff) 45%, transparent)!important;border-radius:8px}` +
+      `[data-rb-inline-translation-for] [data-rb-cloned-media="1"]{position:static!important;inset:auto!important;top:auto!important;right:auto!important;bottom:auto!important;left:auto!important;float:none!important;transform:none!important;max-width:100%!important;vertical-align:middle!important}` +
+      `#rb-para-actions.rb-liquid-surface,#rb-inline-editor.rb-liquid-surface{background:var(--rb-ui-bg,rgba(24,28,42,0.86))!important;color:var(--rb-ui-text,#f8faff)!important;border:1px solid var(--rb-ui-border,rgba(255,255,255,0.26))!important;box-shadow:0 8px 24px rgba(0,0,0,0.28),inset 0 1px 0 rgba(255,255,255,0.32)!important;-webkit-backdrop-filter:blur(24px) saturate(1.9)!important;backdrop-filter:blur(24px) saturate(1.9)!important}` +
+      `#rb-para-actions .rb-liquid-btn,#rb-inline-editor .rb-liquid-btn{height:26px!important;padding:0 10px!important;border:1px solid rgba(255,255,255,0.24)!important;border-radius:999px!important;background:rgba(255,255,255,0.14)!important;color:inherit!important;font:600 12px/1 system-ui,-apple-system,sans-serif!important;cursor:pointer!important}` +
+      `#rb-inline-editor .rb-liquid-btn.primary{background:var(--rb-accent,#684cff)!important;color:#fff!important}`
+    );
+  }
+  style.textContent = buildInlineCss(scale, lh);
+  window.__tbUpdateInlineStyle = (nextScale, nextLh) => {
+    const s = Number.isFinite(nextScale) && nextScale > 0.5 ? nextScale : scale;
+    const l = Number.isFinite(nextLh) && nextLh > 1.0 ? nextLh : lh;
+    const el = document.getElementById("rb-inline-style");
+    if (el) el.textContent = buildInlineCss(s, l);
+  };
 
   const originals = new Map(
     [...document.querySelectorAll("[data-rb-inline-key]")].map((element) => [
@@ -301,6 +315,16 @@
     let actionBar = null;
     let editorBox = null;
 
+    function dispatchParaAction(payload) {
+      try {
+        if (window.webkit?.messageHandlers?.fluoAction?.postMessage) {
+          window.webkit.messageHandlers.fluoAction.postMessage(payload);
+        }
+      } catch {}
+      if (window.__tbEmitAction) window.__tbEmitAction(payload);
+      else window.__tbPendingAction = payload;
+    }
+
     function removeActionBar() {
       actionBar?.remove();
       actionBar = null;
@@ -339,8 +363,7 @@
         const nextText = area.value;
         el.textContent = nextText;
         const payload = { type: "edit", key, translation: nextText };
-        if (window.__tbEmitAction) window.__tbEmitAction(payload);
-        else window.__tbPendingAction = payload;
+        dispatchParaAction(payload);
         editorBox?.remove();
         editorBox = null;
       };
@@ -352,8 +375,7 @@
       area.focus();
     }
 
-    document.addEventListener("mouseover", (event) => {
-      const el = event.target?.closest?.("[data-rb-inline-translation-for]");
+    function showActionBarFor(el) {
       if (!el) return;
       clearTimeout(hideTimer);
       if (activeTarget === el && actionBar) return;
@@ -365,7 +387,7 @@
       actionBar.id = "rb-para-actions";
       actionBar.className = "rb-liquid-surface";
       actionBar.style.cssText =
-        `position:fixed;left:${Math.max(8, Math.min(rect.right - 126, window.innerWidth - 138))}px;top:${Math.max(4, rect.top - 30)}px;z-index:2147483644;display:flex;gap:4px;padding:3px 5px;border-radius:999px;font:11px/1 'Pretendard',system-ui,sans-serif;`;
+        `position:fixed;left:${Math.max(8, Math.min(rect.right - 126, window.innerWidth - 138))}px;top:${Math.max(8, rect.top - 32)}px;z-index:2147483644;display:flex;gap:4px;padding:3px 5px;border-radius:999px;font:11px/1 'Pretendard',system-ui,sans-serif;`;
       const s = ilStr();
       const retry = document.createElement("button");
       retry.type = "button";
@@ -374,9 +396,11 @@
       retry.title = s.retryTitle;
       retry.onclick = (e) => {
         e.stopPropagation();
-        const payload = { type: "retranslate", key };
-        if (window.__tbEmitAction) window.__tbEmitAction(payload);
-        else window.__tbPendingAction = payload;
+        const origEl =
+          originals.get(key) ||
+          (key ? document.querySelector(`[data-rb-inline-key="${CSS.escape(key)}"]`) : null);
+        const source = (origEl?.innerText || origEl?.textContent || "").trim();
+        dispatchParaAction({ type: "retranslate", key, source });
         removeActionBar();
       };
       const edit = document.createElement("button");
@@ -400,9 +424,7 @@
           (key ? document.querySelector(`[data-rb-inline-key="${CSS.escape(key)}"]`) : null);
         const source = (origEl?.innerText || origEl?.textContent || "").trim();
         const translation = (el.innerText || el.textContent || "").trim();
-        const payload = { type: "report-translation", key, source, translation };
-        if (window.__tbEmitAction) window.__tbEmitAction(payload);
-        else window.__tbPendingAction = payload;
+        dispatchParaAction({ type: "report-translation", key, source, translation });
         removeActionBar();
       };
       actionBar.onmouseenter = () => clearTimeout(hideTimer);
@@ -413,6 +435,11 @@
       actionBar.appendChild(edit);
       actionBar.appendChild(report);
       document.documentElement.appendChild(actionBar);
+    }
+
+    document.addEventListener("mouseover", (event) => {
+      const el = event.target?.closest?.("[data-rb-inline-translation-for]");
+      if (el) showActionBarFor(el);
     });
 
     document.addEventListener("mouseout", (event) => {
@@ -421,6 +448,24 @@
         hideTimer = setTimeout(removeActionBar, 250);
       }
     });
+
+    document.addEventListener(
+      "touchend",
+      (event) => {
+        if (event.target?.closest?.("#rb-para-actions, #rb-inline-editor, a, button, input, textarea")) {
+          return;
+        }
+        const el = event.target?.closest?.("[data-rb-inline-translation-for]");
+        if (el) {
+          showActionBarFor(el);
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(removeActionBar, 4000);
+        } else {
+          removeActionBar();
+        }
+      },
+      { passive: true },
+    );
   }
 
   return applied;

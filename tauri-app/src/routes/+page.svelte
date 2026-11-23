@@ -197,12 +197,103 @@
   let justFocusedAddress = false;
   let startQuery = $state("");
   let recentVisits = $state<HistoryItem[]>([]);
+  type QuickShortcut = { id: string; title: string; url: string };
+  const DEFAULT_QUICK_SHORTCUTS: QuickShortcut[] = [
+    { id: "google", title: "Google", url: "https://www.google.com/" },
+    { id: "wikipedia", title: "Wikipedia", url: "https://en.wikipedia.org/" },
+    { id: "namu", title: "나무위키", url: "https://namu.wiki/" },
+    { id: "github", title: "GitHub", url: "https://github.com/" },
+    { id: "nhk", title: "NHK News", url: "https://www3.nhk.or.jp/news/" },
+    { id: "syosetu", title: "小説家になろう", url: "https://syosetu.com/" },
+  ];
+  let quickShortcuts = $state<QuickShortcut[]>(DEFAULT_QUICK_SHORTCUTS);
+  let showAddShortcutForm = $state(false);
+  let newShortcutTitle = $state("");
+  let newShortcutUrl = $state("");
+  let autoTranslateHosts = $state<string[]>([]);
+  let autoTranslatePrompt = $state<{ lang: string; host: string } | null>(null);
+  let ttsActive = $state(false);
+  let ttsProgress = $state<{ index: number; total: number }>({ index: 0, total: 0 });
   let bmDraftId = $state<string | null>(null);
   let bmDraftTitle = $state("");
   let bmDraftUrl = $state("");
   let bmDraftFolder = $state("");
   let bmDraftFavorite = $state(false);
   let bmDraftCreatedAt = $state(0);
+
+  function loadLocalBrowserExtras() {
+    try {
+      const rawShortcuts = localStorage.getItem("fluo-custom-shortcuts");
+      if (rawShortcuts) {
+        const parsed = JSON.parse(rawShortcuts);
+        if (Array.isArray(parsed) && parsed.length > 0) quickShortcuts = parsed;
+      }
+      const rawAutoHosts = localStorage.getItem("fluo-auto-translate-hosts");
+      if (rawAutoHosts) {
+        const parsed = JSON.parse(rawAutoHosts);
+        if (Array.isArray(parsed)) autoTranslateHosts = parsed;
+      }
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
+  function addCustomQuickShortcut() {
+    let rawUrl = newShortcutUrl.trim();
+    if (!rawUrl) return;
+    if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) {
+      rawUrl = `https://${rawUrl}`;
+    }
+    const title = newShortcutTitle.trim() || rawUrl.replace(/^https?:\/\//, "").split("/")[0];
+    quickShortcuts = [...quickShortcuts, { id: crypto.randomUUID(), title, url: rawUrl }];
+    try {
+      localStorage.setItem("fluo-custom-shortcuts", JSON.stringify(quickShortcuts));
+    } catch {}
+    newShortcutTitle = "";
+    newShortcutUrl = "";
+    showAddShortcutForm = false;
+  }
+
+  function removeCustomQuickShortcut(id: string) {
+    quickShortcuts = quickShortcuts.filter((s) => s.id !== id);
+    try {
+      localStorage.setItem("fluo-custom-shortcuts", JSON.stringify(quickShortcuts));
+    } catch {}
+  }
+
+  function toggleAutoTranslateHost(host: string) {
+    const clean = host.trim().toLowerCase();
+    if (!clean) return;
+    if (autoTranslateHosts.includes(clean)) {
+      autoTranslateHosts = autoTranslateHosts.filter((h) => h !== clean);
+    } else {
+      autoTranslateHosts = [...autoTranslateHosts, clean];
+      autoTranslatePrompt = null;
+      if (!inlineMode && !translating) {
+        void translateCurrentPage(false);
+      }
+    }
+    try {
+      localStorage.setItem("fluo-auto-translate-hosts", JSON.stringify(autoTranslateHosts));
+    } catch {}
+  }
+
+  function evalQuickMath(raw: string): string | null {
+    const expr = (raw.startsWith("=") ? raw.slice(1) : raw).trim();
+    if (expr.length < 3 || expr.length > 48) return null;
+    if (!/^[0-9.+\-*/()% \t]+$/.test(expr)) return null;
+    if (!/[+\-*/]/.test(expr) || !/\d/.test(expr)) return null;
+    const compact = expr.replace(/\s+/g, "");
+    if (/[+\-*/%.]{2,}/.test(compact)) return null;
+    try {
+      const fn = new Function(`return (${compact});`);
+      const val = fn();
+      if (typeof val === "number" && Number.isFinite(val)) {
+        return Number.isInteger(val) ? String(val) : String(Number(val.toFixed(6)));
+      }
+    } catch {}
+    return null;
+  }
 
   function trLocal(koText: string, enText: string, jaText: string, zhText: string): string {
     const lang = getUiLang();
@@ -345,7 +436,7 @@
     }
     browser = next;
     if (nextTab && !addressFocused) {
-      address = nextTab.url;
+      address = nextTab.url === "tb://start" ? "" : nextTab.url;
     }
   }
 
@@ -951,13 +1042,35 @@
       suggestionIndex = -1;
       return;
     }
+    const localExtras: AddressSuggestion[] = [];
+    const mathVal = evalQuickMath(query);
+    if (mathVal !== null) {
+      localExtras.push({
+        kind: "calc",
+        title: `= ${mathVal}`,
+        url: mathVal,
+      });
+    }
+    const low = query.toLowerCase();
+    for (const tab of browser.tabs) {
+      if (tab.id === browser.activeTab || tab.url === "tb://start") continue;
+      if (tab.title.toLowerCase().includes(low) || tab.url.toLowerCase().includes(low)) {
+        localExtras.push({
+          kind: "tab",
+          title: tab.title || tab.url,
+          url: `tab://${tab.id}`,
+        });
+      }
+      if (localExtras.length >= 3) break;
+    }
     try {
       const items = await api.addressSuggestions(query);
       if (requestId !== suggestionRequestId) return;
-      suggestions = items;
-      if (suggestionIndex >= items.length) suggestionIndex = -1;
+      const merged = [...localExtras, ...items];
+      suggestions = merged;
+      if (suggestionIndex >= merged.length) suggestionIndex = -1;
     } catch {
-      if (requestId === suggestionRequestId) suggestions = [];
+      if (requestId === suggestionRequestId) suggestions = localExtras;
     }
   }
 
@@ -971,6 +1084,17 @@
     suggestions = [];
     suggestionIndex = -1;
     addressInput?.blur();
+    if (item.url.startsWith("tab://")) {
+      const tabId = item.url.slice(6);
+      void selectTab(tabId);
+      return;
+    }
+    if (item.kind === "calc") {
+      void navigator.clipboard.writeText(item.url).catch(() => {});
+      address = item.url;
+      notify("success", `${item.title} (${trLocal("클립보드 복사됨", "Copied", "コピー済み", "已复制")})`);
+      return;
+    }
     void navigate(item.url);
   }
 
@@ -2009,6 +2133,7 @@
   }
 
   onMount(() => {
+    loadLocalBrowserExtras();
     try {
       glassTinted = localStorage.getItem("glass-tinted") === "true";
       accentColor = localStorage.getItem("accent-color") || "#684cff";
@@ -2209,6 +2334,12 @@
         translation?: string;
         doNotTranslate?: boolean;
         key?: string;
+        lang?: string;
+        url?: string;
+        playing?: boolean;
+        paused?: boolean;
+        index?: number;
+        total?: number;
       }) => void;
     };
     overlayWindow.__ON_BROWSER_MESSAGE__ = (msg) => {
@@ -2221,6 +2352,46 @@
         msg.type === "report-translation"
       ) {
         void handlePageAction(msg).catch((e) => notify("error", errorMessage(e)));
+        return;
+      }
+      if (msg.type === "dynamic-blocks-added") {
+        if (inlineMode && !translating) {
+          void translateCurrentPage(false);
+        }
+        return;
+      }
+      if (msg.type === "tts-state") {
+        ttsActive = Boolean(msg.playing);
+        ttsProgress = { index: msg.index ?? 0, total: msg.total ?? 0 };
+        void tick().then(() => updateLayout());
+        return;
+      }
+      if (msg.type === "page-language-detected" && msg.lang) {
+        const curUrl = activeTab?.url ?? msg.url ?? "";
+        if (!curUrl.startsWith("http") || inlineMode || translating) return;
+        const targetRaw = (selectedTargetLanguage || settings.targetLanguage || "한국어").toLowerCase();
+        const targetCode = targetRaw.includes("한국") || targetRaw === "ko"
+          ? "ko"
+          : targetRaw.includes("日本") || targetRaw === "ja"
+            ? "ja"
+            : targetRaw.includes("中文") || targetRaw.startsWith("zh")
+              ? "zh"
+              : "en";
+        if (msg.lang === targetCode || msg.lang === "unknown") {
+          autoTranslatePrompt = null;
+          return;
+        }
+        let host = "";
+        try {
+          host = new URL(curUrl).hostname.toLowerCase();
+        } catch {}
+        if (host && autoTranslateHosts.includes(host)) {
+          autoTranslatePrompt = null;
+          void translateCurrentPage(false);
+        } else if (host) {
+          autoTranslatePrompt = { lang: msg.lang.toUpperCase(), host };
+          void tick().then(() => updateLayout());
+        }
         return;
       }
       if (msg.type === "page-contextmenu") {
@@ -2693,12 +2864,65 @@
           <button type="submit">{t("common.search")}</button>
         </form>
         <section class="start-sec">
-          <h2>{trLocal("빠른 실행", "Quick Launch", "クイック起動", "快速访问")}</h2>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <h2 style="margin:0;">{trLocal("빠른 실행", "Quick Launch", "クイック起動", "快速访问")}</h2>
+            <button
+              type="button"
+              class="action"
+              style="height:26px;padding:0 10px;font-size:12px;"
+              onclick={() => (showAddShortcutForm = !showAddShortcutForm)}
+            >
+              {showAddShortcutForm ? t("common.cancel") : `+ ${t("common.add")}`}
+            </button>
+          </div>
+          {#if showAddShortcutForm}
+            <form
+              style="display:flex;gap:8px;margin-bottom:10px;"
+              onsubmit={(e) => {
+                e.preventDefault();
+                addCustomQuickShortcut();
+              }}
+            >
+              <input
+                type="text"
+                bind:value={newShortcutTitle}
+                placeholder={trLocal("이름", "Name", "名前", "名称")}
+                style="flex:1;height:32px;padding:0 10px;border-radius:10px;border:1px solid var(--line);"
+              />
+              <input
+                type="text"
+                bind:value={newShortcutUrl}
+                placeholder="https://example.com"
+                style="flex:2;height:32px;padding:0 10px;border-radius:10px;border:1px solid var(--line);"
+              />
+              <button type="submit" class="action primary-liquid" style="height:32px;padding:0 14px;">
+                {t("common.save")}
+              </button>
+            </form>
+          {/if}
           <div class="start-grid">
-            <button type="button" class="start-card" onclick={() => void api.navigate("https://www.google.com/")}>Google</button>
-            <button type="button" class="start-card" onclick={() => void api.navigate("https://en.wikipedia.org/")}>Wikipedia</button>
-            <button type="button" class="start-card" onclick={() => void api.navigate("https://namu.wiki/")}>나무위키</button>
-            <button type="button" class="start-card" onclick={() => void api.navigate("https://github.com/")}>GitHub</button>
+            {#each quickShortcuts as item (item.id)}
+              <div class="start-card" style="position:relative;display:flex;align-items:center;justify-content:space-between;">
+                <button
+                  type="button"
+                  style="all:unset;cursor:pointer;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;"
+                  onclick={() => void api.navigate(item.url)}
+                >
+                  {item.title}
+                </button>
+                <button
+                  type="button"
+                  title={t("common.delete")}
+                  style="all:unset;cursor:pointer;opacity:0.55;padding:0 4px;font-size:14px;"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    removeCustomQuickShortcut(item.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            {/each}
           </div>
         </section>
         {#if bookmarks.length > 0}
@@ -3071,11 +3295,15 @@
                     onclick={() => chooseSuggestion(item)}
                   >
                     <span class="suggestion-kind" aria-hidden="true">
-                      {item.kind === "bookmark" ? "★" : item.kind === "search" ? "🔍" : "◷"}
+                      {item.kind === "bookmark" ? "★" : item.kind === "search" ? "🔍" : item.kind === "calc" ? "＝" : item.kind === "tab" ? "⇥" : "◷"}
                     </span>
                     <span class="suggestion-title">{item.title || item.url}</span>
                     <span class="suggestion-url">
-                      {item.kind === "search" ? t("chrome.previousSearch") : item.url}
+                      {item.kind === "search"
+                        ? t("chrome.previousSearch")
+                        : item.kind === "tab"
+                          ? trLocal("열린 탭으로 전환", "Switch to Tab", "タブに切り替え", "切换到标签页")
+                          : item.url}
                     </span>
                   </button>
                 </li>
@@ -3169,6 +3397,80 @@
           </button>
         </div>
       </div>
+
+      {#if autoTranslatePrompt && !inlineMode && !translating}
+        <div class="prompt-banner" role="region" aria-label="Auto Translate">
+          <span class="prompt-text">
+            🌐 {trLocal("외국어 페이지가 감지되었습니다", "Foreign language page detected", "外国語ページを検出しました", "检测到外语页面")}
+            <strong>({autoTranslatePrompt.lang})</strong>
+          </span>
+          <div class="prompt-actions">
+            <button
+              type="button"
+              class="prompt-btn primary"
+              onclick={() => {
+                autoTranslatePrompt = null;
+                void tick().then(() => updateLayout());
+                void translateCurrentPage(false);
+              }}
+            >
+              {t("chrome.translateBtn")}
+            </button>
+            <button
+              type="button"
+              class="prompt-btn"
+              onclick={() => {
+                const h = autoTranslatePrompt?.host ?? "";
+                autoTranslatePrompt = null;
+                void tick().then(() => updateLayout());
+                toggleAutoTranslateHost(h);
+              }}
+            >
+              {trLocal("이 사이트 항상 번역", "Always translate site", "このサイトを常に翻訳", "始终翻译此站点")}
+            </button>
+            <button
+              type="button"
+              class="prompt-close"
+              aria-label={t("common.close")}
+              onclick={() => {
+                autoTranslatePrompt = null;
+                void tick().then(() => updateLayout());
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if ttsActive}
+        <div class="prompt-banner" role="region" aria-label="Read Aloud">
+          <span class="prompt-text">
+            🔊 {trLocal("소리 내어 읽기", "Read Aloud", "音声読み上げ", "语音朗读")}
+            {#if ttsProgress.total > 0}
+              <strong>({ttsProgress.index}/{ttsProgress.total})</strong>
+            {/if}
+          </span>
+          <div class="prompt-actions">
+            <button type="button" class="prompt-btn" onclick={() => void api.runPageContextAction("tts-prev")}>⏮</button>
+            <button type="button" class="prompt-btn primary" onclick={() => void api.runPageContextAction("tts-toggle")}>⏯</button>
+            <button type="button" class="prompt-btn" onclick={() => void api.runPageContextAction("tts-next")}>⏭</button>
+            <button type="button" class="prompt-btn" onclick={() => void api.runPageContextAction("tts-rate", "1.25")}>1.25x</button>
+            <button
+              type="button"
+              class="prompt-close"
+              aria-label={t("common.close")}
+              onclick={() => {
+                ttsActive = false;
+                void api.runPageContextAction("tts-stop");
+                void tick().then(() => updateLayout());
+              }}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      {/if}
 
       {#if popupBlockedNotice}
         <div class="prompt-banner" role="alert">
@@ -3511,6 +3813,17 @@
               >
                 {siteAllowlisted ? t("adblock.reenableSite") : t("adblock.allowSite", { host: curHost })}
               </button>
+              <button
+                type="button"
+                onclick={() => {
+                  toggleAutoTranslateHost(curHost);
+                  void closeOverlay();
+                }}
+              >
+                {autoTranslateHosts.includes(curHost)
+                  ? `✓ ${trLocal("이 사이트 항상 자동 번역 켜짐", "Always translate enabled", "常に自動翻訳：オン", "已开启始终自动翻译")}`
+                  : trLocal("이 사이트 항상 자동 번역", "Always translate this site", "このサイトを常に自動翻訳", "始终自动翻译此站点")}
+              </button>
             {/if}
             {#if curUrl}
               <button type="button" onclick={() => { void copyCurrentUrl(); void closeOverlay(); }}>{t("common.copy")}</button>
@@ -3553,7 +3866,16 @@
             </label>
             <label class="tp-field">
               <span>{trLocal("폴더", "Folder", "フォルダ", "文件夹")}</span>
-              <input type="text" bind:value={bmDraftFolder} placeholder="Default" />
+              <input type="text" list="bm-existing-folders" bind:value={bmDraftFolder} placeholder="Default" />
+              <datalist id="bm-existing-folders">
+                {#each [...new Set(bookmarks.map((b) => b.folder).filter(Boolean))] as folderName (folderName)}
+                  <option value={folderName}></option>
+                {/each}
+              </datalist>
+            </label>
+            <label class="tp-check">
+              <input type="checkbox" bind:checked={bmDraftFavorite} />
+              <span>★ {trLocal("즐겨찾기 고정", "Pin to Favorites", "お気に入りに固定", "固定到收藏夹")}</span>
             </label>
             <div class="tp-actions">
               <button class="primary" type="submit">{t("common.save")}</button>
@@ -3884,10 +4206,27 @@
           </button>
           <button
             onclick={() => {
+              void closeOverlay().then(() => {
+                ttsActive = true;
+                return api.runPageContextAction("tts-toggle");
+              });
+            }}
+          >
+            <span>🔊 {trLocal("소리 내어 읽기 (TTS)", "Read Aloud (TTS)", "音声読み上げ (TTS)", "语音朗读 (TTS)")}</span>
+          </button>
+          <button
+            onclick={() => {
               void closeOverlay().then(() => printPage());
             }}
           >
             <span>{t("pageMenu.printDots")}</span><kbd>Ctrl+P</kbd>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("inspect"));
+            }}
+          >
+            <span>{trLocal("요소 검사 (개발자 도구)", "Inspect Element", "要素を調査", "检查元素")}</span><kbd>F12</kbd>
           </button>
         </nav>
       </div>
@@ -4245,6 +4584,17 @@
                 {t("translate.stop")}
               </button>
             {/if}
+            <button
+              type="button"
+              onclick={() => {
+                void closeOverlay().then(() => {
+                  ttsActive = true;
+                  return api.runPageContextAction("tts-toggle");
+                });
+              }}
+            >
+              🔊 {trLocal("소리 내어 읽기 (TTS)", "Read Aloud (TTS)", "音声読み上げ (TTS)", "语音朗读 (TTS)")}
+            </button>
             <button
               type="button"
               class="tp-report-btn"

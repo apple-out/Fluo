@@ -12,6 +12,7 @@ enum ActiveSheetKind: String, Identifiable {
     case history
     case translationHistory
     case glossary
+    case downloads
     case feedback
     case settings
 
@@ -20,6 +21,7 @@ enum ActiveSheetKind: String, Identifiable {
 
 private struct SelectAllURLField: UIViewRepresentable {
     @Binding var text: String
+    @Binding var isEditing: Bool
     var placeholder: String
     var onSubmit: () -> Void
 
@@ -51,6 +53,8 @@ private struct SelectAllURLField: UIViewRepresentable {
         }
         if !uiView.isFirstResponder && uiView.text != text {
             uiView.text = text
+        } else if uiView.isFirstResponder && uiView.text != text {
+            uiView.text = text
         }
     }
 
@@ -66,12 +70,18 @@ private struct SelectAllURLField: UIViewRepresentable {
         }
 
         func textFieldDidBeginEditing(_ textField: UITextField) {
+            parent.isEditing = true
             DispatchQueue.main.async {
                 textField.selectAll(nil)
             }
         }
 
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            parent.isEditing = false
+        }
+
         func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            parent.isEditing = false
             textField.resignFirstResponder()
             parent.onSubmit()
             return true
@@ -84,6 +94,7 @@ struct ContentView: View {
     @ObservedObject private var catalog = ModelCatalog.shared
 
     @State private var urlDraft = ""
+    @State private var isEditingURL = false
     @State private var activeSheet: ActiveSheetKind?
     @State private var editingBookmark: BookmarkItem?
     @State private var showOnboarding = false
@@ -179,13 +190,179 @@ struct ContentView: View {
                         openBookmarks: { activeSheet = .bookmarks }
                     )
                 } else {
-                    WebViewContainer(webView: store.activeTab.webView)
-                        .id(store.activeTab.id)
-                        .ignoresSafeArea(edges: .bottom)
+                    ZStack {
+                        WebViewContainer(webView: store.activeTab.webView)
+                            .id(store.activeTab.id)
+                            .ignoresSafeArea(edges: .bottom)
+
+                        if let pageErr = store.activeTab.pageErrorText {
+                            VStack(spacing: 12) {
+                                Image(systemName: "wifi.exclamationmark")
+                                    .font(.largeTitle)
+                                    .foregroundStyle(.orange)
+                                Text(pageErr)
+                                    .font(.footnote)
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 10) {
+                                    Button(t("err.retry")) {
+                                        store.activeTab.pageErrorText = nil
+                                        if let url = URL(string: store.activeTab.urlString) {
+                                            store.activeTab.webView.load(URLRequest(url: url))
+                                        } else {
+                                            store.activeTab.webView.reload()
+                                        }
+                                    }
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
+                                    .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+
+                                    Button(t("menu.startPage")) {
+                                        store.activeTab.openStartPage()
+                                    }
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 8)
+                                    .liquidGlassPill(interactive: true)
+                                }
+                            }
+                            .padding(20)
+                            .liquidGlass(cornerRadius: 24)
+                            .padding(.horizontal, 24)
+                        }
+                    }
                 }
             }
 
             VStack(spacing: 8) {
+                if isEditingURL {
+                    omniboxOverlayPanel
+                }
+
+                if !isEditingURL && !store.liveWebSelection.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "text.quote")
+                            .font(.caption.bold())
+                            .foregroundStyle(FluoThemeTokens.indigo)
+                        Text(store.liveWebSelection)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .frame(maxWidth: 140, alignment: .leading)
+                        Button(t("tr.selection")) {
+                            store.translateSelectedText()
+                        }
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+
+                        Button(t("sel.addGlossary")) {
+                            store.addGlossaryItem(source: store.liveWebSelection, target: "", caseSensitive: false)
+                            store.liveWebSelection = ""
+                            activeSheet = .glossary
+                        }
+                        .font(.caption.bold())
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .liquidGlassPill(interactive: true)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .liquidGlassPill()
+                    .padding(.horizontal, 12)
+                }
+
+                if store.isSpeakingTTS {
+                    HStack(spacing: 12) {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .foregroundStyle(FluoThemeTokens.indigo)
+                            .font(.caption.bold())
+                        Text("\(store.ttsIndex + 1)/\(max(1, store.ttsTotal))")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                        Button {
+                            store.stepTTS(delta: -1)
+                        } label: {
+                            Image(systemName: "backward.fill").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            store.startOrToggleTTS()
+                        } label: {
+                            Image(systemName: store.isPausedTTS ? "play.fill" : "pause.fill")
+                                .font(.subheadline.bold())
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            store.stepTTS(delta: 1)
+                        } label: {
+                            Image(systemName: "forward.fill").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            let nextRate: Float = store.ttsRate < 1.2 ? 1.25 : (store.ttsRate < 1.45 ? 1.5 : 1.0)
+                            store.setTTSRate(nextRate)
+                        } label: {
+                            Text(String(format: "%.2gx", store.ttsRate))
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .liquidGlassPill(interactive: true)
+                        }
+                        .buttonStyle(.plain)
+                        Button {
+                            store.stopTTS()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                }
+
+                if !isEditingURL && store.showAutoTranslatePrompt && !store.isTranslating && store.activeTab.displayMode == .original {
+                    HStack(spacing: 8) {
+                        Image(systemName: "globe")
+                            .font(.caption.bold())
+                            .foregroundStyle(FluoThemeTokens.indigo)
+                        Text("\(t("tr.autoPrompt")) (\(store.detectedForeignLanguageCode))")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button(t("bar.translate")) {
+                            store.translateActiveTab(bilingual: false)
+                        }
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+
+                        Button(t("tr.alwaysHost")) {
+                            store.toggleAlwaysTranslateCurrentHost()
+                        }
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .liquidGlassPill(interactive: true)
+
+                        Button {
+                            store.showAutoTranslatePrompt = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .liquidGlassPill()
+                    .padding(.horizontal, 12)
+                }
                 if store.isTranslating {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -309,6 +486,8 @@ struct ContentView: View {
                     TranslationHistorySheet(store: store)
                 case .glossary:
                     GlossarySheet(store: store)
+                case .downloads:
+                    DownloadsSheet(store: store)
                 case .feedback:
                     FeedbackSheet(store: store)
                 case .settings:
@@ -326,6 +505,110 @@ struct ContentView: View {
 
     private func syncDraftFromActiveTab() {
         urlDraft = store.activeTab.isStartPage ? "" : store.activeTab.urlString
+    }
+
+    private var omniboxOverlayPanel: some View {
+        let suggestions = store.omniboxSuggestions(for: urlDraft)
+        return VStack(spacing: 6) {
+            if !suggestions.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(suggestions.prefix(5).enumerated()), id: \.element.id) { idx, item in
+                        Button {
+                            if item.kind == .calculation {
+                                UIPasteboard.general.string = item.targetURLOrQuery
+                                urlDraft = item.targetURLOrQuery
+                            } else if item.kind == .switchTab, let tid = item.tabId {
+                                isEditingURL = false
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                store.selectTab(tid)
+                            } else {
+                                isEditingURL = false
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                store.activeTab.navigate(input: item.targetURLOrQuery, searchEngine: store.userData.searchEngine)
+                            }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: {
+                                    switch item.kind {
+                                    case .calculation: return "equal.circle.fill"
+                                    case .switchTab: return "arrow.right.square.fill"
+                                    case .bookmark: return "star.fill"
+                                    case .history: return "clock"
+                                    case .search: return "magnifyingglass"
+                                    }
+                                }())
+                                .font(.caption.bold())
+                                .foregroundStyle(FluoThemeTokens.indigo)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.title)
+                                        .font(.caption.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text(item.subtitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                if item.kind == .switchTab {
+                                    Text(t("omni.switchTab"))
+                                        .font(.caption2.bold())
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 3)
+                                        .background(FluoThemeTokens.indigo.opacity(0.2), in: Capsule())
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 9)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if idx < min(suggestions.count, 5) - 1 {
+                            Divider().opacity(0.2)
+                        }
+                    }
+                }
+                .liquidGlass(cornerRadius: 18)
+                .padding(.horizontal, 12)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach([".com", ".kr", "/", "https://", "@namu ", "@naver ", "@yt "], id: \.self) { token in
+                        Button {
+                            if token.hasPrefix("@") {
+                                urlDraft = token + urlDraft
+                            } else {
+                                urlDraft += token
+                            }
+                        } label: {
+                            Text(token)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                        .liquidGlassPill(interactive: true)
+                    }
+                    if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !clip.isEmpty {
+                        Button {
+                            isEditingURL = false
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            store.activeTab.navigate(input: clip, searchEngine: store.userData.searchEngine)
+                        } label: {
+                            Label("Paste & Go", systemImage: "doc.on.clipboard")
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.plain)
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true)
+                    }
+                }
+                .padding(.horizontal, 12)
+            }
+        }
     }
 
     private var findBar: some View {
@@ -453,6 +736,7 @@ struct ContentView: View {
                 } else {
                     SelectAllURLField(
                         text: $urlDraft,
+                        isEditing: $isEditingURL,
                         placeholder: t("bar.urlPlaceholder")
                     ) {
                         store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)

@@ -118,7 +118,19 @@ export const api = {
   showQuickTranslation: (text: string, isError: boolean) =>
     invoke<void>("show_quick_translation", { text, isError }),
   runPageContextAction: (
-    action: "quick-translate" | "add-glossary" | "copy" | "cut" | "paste" | "select-all" | "inspect",
+    action:
+      | "quick-translate"
+      | "add-glossary"
+      | "copy"
+      | "cut"
+      | "paste"
+      | "select-all"
+      | "inspect"
+      | "tts-toggle"
+      | "tts-stop"
+      | "tts-next"
+      | "tts-prev"
+      | "tts-rate",
     text?: string,
     x?: number,
     y?: number,

@@ -7,24 +7,11 @@ struct StartPageView: View {
     var openBookmarks: () -> Void
 
     @State private var query = ""
+    @State private var showAddShortcut = false
+    @State private var shortcutTitleDraft = ""
+    @State private var shortcutUrlDraft = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
-
-    private struct QuickSite: Identifiable {
-        let id: String
-        let title: String
-        let url: String
-        let icon: String
-    }
-
-    private var quickSites: [QuickSite] {
-        [
-            QuickSite(id: "google", title: "Google", url: "https://www.google.com/", icon: "magnifyingglass"),
-            QuickSite(id: "wiki", title: "Wikipedia", url: "https://en.wikipedia.org/", icon: "book.closed.fill"),
-            QuickSite(id: "namu", title: "나무위키", url: "https://namu.wiki/", icon: "leaf.fill"),
-            QuickSite(id: "github", title: "GitHub", url: "https://github.com/", icon: "chevron.left.forwardslash.chevron.right"),
-        ]
-    }
 
     private var isModelReady: Bool {
         store.provider != .hyMt2 || catalog.isInstalled(store.selectedLocalModel)
@@ -96,18 +83,31 @@ struct StartPageView: View {
                     .liquidGlass(cornerRadius: 20)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text(t("start.quick"))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text(t("start.quick"))
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button {
+                                shortcutTitleDraft = ""
+                                shortcutUrlDraft = ""
+                                showAddShortcut = true
+                            } label: {
+                                Label(t("common.add"), systemImage: "plus.circle.fill")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(FluoThemeTokens.indigo)
+                            }
+                            .buttonStyle(.plain)
+                        }
 
                         LiquidGlassGroup(spacing: 10) {
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
-                                ForEach(quickSites) { site in
+                                ForEach(store.userData.customShortcuts) { site in
                                     Button {
-                                        store.activeTab.navigate(input: site.url, searchEngine: store.userData.searchEngine)
+                                        store.activeTab.navigate(input: site.urlString, searchEngine: store.userData.searchEngine)
                                     } label: {
                                         VStack(spacing: 8) {
-                                            Image(systemName: site.icon)
+                                            Image(systemName: site.icon.isEmpty ? "globe" : site.icon)
                                                 .font(.title3.weight(.semibold))
                                                 .foregroundStyle(FluoThemeTokens.indigo)
                                             Text(site.title)
@@ -120,8 +120,25 @@ struct StartPageView: View {
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
                                     .liquidGlass(cornerRadius: 18, interactive: true)
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            store.removeCustomShortcut(site.id)
+                                        } label: {
+                                            Label(t("set.delete"), systemImage: "trash")
+                                        }
+                                    }
                                 }
                             }
+                        }
+                    }
+                    .alert(t("common.add"), isPresented: $showAddShortcut) {
+                        TextField(t("bm.nameLabel"), text: $shortcutTitleDraft)
+                        TextField(t("bm.urlLabel"), text: $shortcutUrlDraft)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Button(t("common.cancel"), role: .cancel) {}
+                        Button(t("common.add")) {
+                            store.addCustomShortcut(title: shortcutTitleDraft, urlString: shortcutUrlDraft)
                         }
                     }
 

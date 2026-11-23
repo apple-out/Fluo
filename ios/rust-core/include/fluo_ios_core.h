@@ -28,6 +28,9 @@ char *fluo_translate_with_glossary(
     const char *glossary_hint
 );
 
+/// Immediately signals any running on-device token generation loop to abort.
+void fluo_cancel_translation(void);
+
 /// Unloads the active GGUF model immediately to free iOS RAM/Metal buffers (call on backgrounding).
 void fluo_unload_model(void);
 

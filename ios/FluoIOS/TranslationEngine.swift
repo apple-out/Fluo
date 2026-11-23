@@ -12,6 +12,70 @@ final class TranslationEngine {
     static let shared = TranslationEngine()
     private(set) var activeLocalModelPath: URL?
     private let lock = NSLock()
+    private let cacheLock = NSLock()
+    private var memoryCache: [String: String] = [:]
+    private var cacheLoaded = false
+
+    private static var cacheFileURL: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return base.appendingPathComponent("fluo_segment_cache.json")
+    }
+
+    private func ensureCacheLoadedLocked() {
+        guard !cacheLoaded else { return }
+        cacheLoaded = true
+        if let data = try? Data(contentsOf: Self.cacheFileURL),
+           let dict = try? JSONDecoder().decode([String: String].self, from: data) {
+            memoryCache = dict
+        }
+    }
+
+    private func makeCacheKey(source: String, targetLanguage: String, style: String) -> String {
+        let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
+    }
+
+    func cachedTranslation(for source: String, targetLanguage: String, style: String) -> String? {
+        let key = makeCacheKey(source: source, targetLanguage: targetLanguage, style: style)
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        ensureCacheLoadedLocked()
+        return memoryCache[key]
+    }
+
+    func storeCachedTranslation(_ translation: String, for source: String, targetLanguage: String, style: String) {
+        let clean = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let key = makeCacheKey(source: source, targetLanguage: targetLanguage, style: style)
+        cacheLock.lock()
+        ensureCacheLoadedLocked()
+        if memoryCache.count >= 1600 {
+            // Prune ~400 arbitrary entries to keep memory & disk compact.
+            for k in memoryCache.keys.prefix(400) {
+                memoryCache.removeValue(forKey: k)
+            }
+        }
+        memoryCache[key] = clean
+        let snapshot = memoryCache
+        cacheLock.unlock()
+        DispatchQueue.global(qos: .utility).async {
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: Self.cacheFileURL, options: [.atomic])
+            }
+        }
+    }
+
+    func clearTranslationCache() {
+        cacheLock.lock()
+        memoryCache.removeAll()
+        cacheLoaded = true
+        cacheLock.unlock()
+        try? FileManager.default.removeItem(at: Self.cacheFileURL)
+    }
+
+    func cancelActiveInference() {
+        fluo_cancel_translation()
+    }
 
     func ensureLocalModelLoaded(path: URL) throws {
         lock.lock()
@@ -37,6 +101,7 @@ final class TranslationEngine {
     }
 
     func unloadOnDeviceModel() {
+        fluo_cancel_translation()
         lock.lock()
         defer { lock.unlock() }
         fluo_unload_model()
@@ -46,8 +111,25 @@ final class TranslationEngine {
     static func matchingGlossaryHint(for source: String, glossary: [GlossaryItem]) -> String {
         guard !glossary.isEmpty else { return "" }
         let matched = glossary.filter { item in
+            guard item.enabled else { return false }
             let needle = item.source.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { return false }
+            if item.useRegex {
+                let opts: NSRegularExpression.Options = item.caseSensitive ? [] : [.caseInsensitive]
+                if let regex = try? NSRegularExpression(pattern: needle, options: opts) {
+                    let range = NSRange(source.startIndex..<source.endIndex, in: source)
+                    return regex.firstMatch(in: source, options: [], range: range) != nil
+                }
+                return false
+            }
+            if item.exactMatch {
+                let pattern = "\\b\(NSRegularExpression.escapedPattern(for: needle))\\b"
+                let opts: NSRegularExpression.Options = item.caseSensitive ? [] : [.caseInsensitive]
+                if let regex = try? NSRegularExpression(pattern: pattern, options: opts) {
+                    let range = NSRange(source.startIndex..<source.endIndex, in: source)
+                    return regex.firstMatch(in: source, options: [], range: range) != nil
+                }
+            }
             if item.caseSensitive {
                 return source.contains(needle)
             }
@@ -56,11 +138,97 @@ final class TranslationEngine {
         guard !matched.isEmpty else { return "" }
         return matched.map { item in
             let target = item.target.trimmingCharacters(in: .whitespacesAndNewlines)
-            if target.isEmpty {
-                return "\(item.source) -> \(item.source) (keep original)"
+            if item.doNotTranslate || target.isEmpty {
+                return "\(item.source) -> \(item.source) (do NOT translate; keep verbatim)"
             }
             return "\(item.source) -> \(target)"
         }.joined(separator: "\n")
+    }
+
+    func translateBatchCloud(
+        _ sources: [String],
+        provider: AiProviderKind,
+        modelId: String,
+        baseUrl: String,
+        targetLanguage: String,
+        style: String = "auto",
+        glossary: [GlossaryItem] = []
+    ) async throws -> [String] {
+        guard sources.count > 1, provider != .hyMt2 else {
+            var singleResults: [String] = []
+            for src in sources {
+                try Task.checkCancellation()
+                let tr = try await translateText(
+                    src,
+                    provider: provider,
+                    modelId: modelId,
+                    baseUrl: baseUrl,
+                    targetLanguage: targetLanguage,
+                    style: style,
+                    glossary: glossary
+                )
+                singleResults.append(tr)
+            }
+            return singleResults
+        }
+        let combinedSource = sources.joined(separator: "\n")
+        let glossaryHint = Self.matchingGlossaryHint(for: combinedSource, glossary: glossary)
+        let glossaryBlock = glossaryHint.isEmpty ? "" : "\nMandatory Glossary:\n\(glossaryHint)\n"
+        let numberedInput = sources.enumerated().map { idx, text in
+            "<<<SEG_\(idx)>>>\n\(text)"
+        }.joined(separator: "\n\n")
+        let batchInstruction = """
+        Translate each segment below into \(targetLanguage) (style: \(style)), preserving inline markers like [[1|...]] or [[img1]] and keeping each <<<SEG_N>>> header on its own line before its translated text. Do not merge or omit any <<<SEG_N>>> block.\(glossaryBlock)
+
+        \(numberedInput)
+        """
+        let rawOutput = try await translateText(
+            batchInstruction,
+            provider: provider,
+            modelId: modelId,
+            baseUrl: baseUrl,
+            targetLanguage: targetLanguage,
+            style: style,
+            glossary: []
+        )
+        var parsed: [Int: String] = [:]
+        let pattern = "<<<SEG_(\\d+)>>>\\s*([\\s\\S]*?)(?=<<<SEG_\\d+>>>|$)"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+            let nsRange = NSRange(rawOutput.startIndex..<rawOutput.endIndex, in: rawOutput)
+            for match in regex.matches(in: rawOutput, options: [], range: nsRange) {
+                if let idxRange = Range(match.range(at: 1), in: rawOutput),
+                   let txtRange = Range(match.range(at: 2), in: rawOutput),
+                   let idx = Int(rawOutput[idxRange]) {
+                    let tr = String(rawOutput[txtRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !tr.isEmpty {
+                        parsed[idx] = tr
+                    }
+                }
+            }
+        }
+        if parsed.count == sources.count {
+            return (0..<sources.count).compactMap { parsed[$0] }
+        }
+        // Fallback for any missing segment in the batch
+        var results: [String] = []
+        for (idx, src) in sources.enumerated() {
+            if let hit = parsed[idx] {
+                results.append(hit)
+            } else {
+                try Task.checkCancellation()
+                let tr = try await translateText(
+                    src,
+                    provider: provider,
+                    modelId: modelId,
+                    baseUrl: baseUrl,
+                    targetLanguage: targetLanguage,
+                    style: style,
+                    glossary: glossary
+                )
+                results.append(tr)
+            }
+        }
+        return results
     }
 
     func translateText(

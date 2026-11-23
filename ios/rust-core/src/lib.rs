@@ -4,6 +4,7 @@ use std::io::Read;
 use std::num::NonZeroU32;
 use std::os::raw::c_char;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -23,6 +24,7 @@ struct LoadedModel {
 static GLOBAL_BACKEND: OnceLock<Result<Arc<LlamaBackend>, String>> = OnceLock::new();
 static ACTIVE_MODEL: OnceLock<Mutex<Option<LoadedModel>>> = OnceLock::new();
 static LAST_LOAD_ERROR: OnceLock<Mutex<String>> = OnceLock::new();
+static CANCEL_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn set_last_error(msg: &str) {
     let lock = LAST_LOAD_ERROR.get_or_init(|| Mutex::new(String::new()));
@@ -74,7 +76,9 @@ fn normalize_target_lang(lang: &str) -> &'static str {
         "ko" | "kor" | "korean" | "한국어" => "Korean",
         "en" | "eng" | "english" | "영어" => "English",
         "ja" | "jpn" | "japanese" | "일본어" | "日本語" => "Japanese",
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "중국어" | "中文" | "中文(简体)" | "简体中文" => "Chinese",
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "중국어" | "中文" | "中文(简体)" | "简体中文" => {
+            "Chinese"
+        }
         "zh-tw" | "zh-hant" | "繁體中文" => "Traditional Chinese",
         _ => "Korean",
     }
@@ -98,7 +102,10 @@ fn build_prompt(
     let glossary_section = if glossary_hint.trim().is_empty() {
         String::new()
     } else {
-        format!("\nMandatory Glossary (apply strictly):\n{}\n", glossary_hint.trim())
+        format!(
+            "\nMandatory Glossary (apply strictly):\n{}\n",
+            glossary_hint.trim()
+        )
     };
     let user_prompt = format!(
         "Translate the following segment into {target}, preserving inline link/media tags like [[1|text]] or [[img1]] verbatim. Output ONLY the translated text.\nStyle: {tone_hint}{glossary_section}\n\n{source}"
@@ -168,6 +175,9 @@ fn translate_with_model(
     let mut batch = LlamaBatch::new(256, 1);
     let total_prompt = tokens.len();
     for (chunk_idx, chunk) in tokens.chunks(256).enumerate() {
+        if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+            return Err("Translation cancelled".to_string());
+        }
         batch.clear();
         let base_pos = chunk_idx * 256;
         for (offset, &tok) in chunk.iter().enumerate() {
@@ -196,6 +206,9 @@ fn translate_with_model(
         .min(needed_ctx.saturating_sub(4));
 
     while (cur_pos as u32) < max_pos {
+        if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+            return Err("Translation cancelled".to_string());
+        }
         let token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(token);
         if vocab.is_eog(token) {
@@ -222,11 +235,7 @@ fn translate_with_model(
 }
 
 #[no_mangle]
-pub extern "C" fn fluo_load_model(
-    model_path: *const c_char,
-    n_gpu_layers: i32,
-    n_ctx: u32,
-) -> i32 {
+pub extern "C" fn fluo_load_model(model_path: *const c_char, n_gpu_layers: i32, n_ctx: u32) -> i32 {
     let Some(path_str) = cstr_to_string(model_path) else {
         set_last_error("Invalid UTF-8 model path");
         return -1;
@@ -269,7 +278,11 @@ pub extern "C" fn fluo_load_model(
             return -3;
         }
     };
-    let ngl = if n_gpu_layers < 0 { 99 } else { n_gpu_layers as u32 };
+    let ngl = if n_gpu_layers < 0 {
+        99
+    } else {
+        n_gpu_layers as u32
+    };
     let attempts: Vec<(u32, bool, &str)> = if ngl > 0 {
         vec![
             (ngl, true, "metal-mmap"),
@@ -343,10 +356,14 @@ pub extern "C" fn fluo_translate_with_glossary(
     let style_str = cstr_to_string(style).unwrap_or_else(|| "auto".to_string());
     let glossary = cstr_to_string(glossary_hint).unwrap_or_default();
 
+    CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let guard = match active_slot().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
     };
+    if CANCEL_REQUESTED.load(Ordering::Relaxed) {
+        return json_err("Translation cancelled");
+    }
     let Some(loaded) = guard.as_ref() else {
         return json_err("No on-device model loaded");
     };
@@ -358,7 +375,13 @@ pub extern "C" fn fluo_translate_with_glossary(
 }
 
 #[no_mangle]
+pub extern "C" fn fluo_cancel_translation() {
+    CANCEL_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+#[no_mangle]
 pub extern "C" fn fluo_unload_model() {
+    CANCEL_REQUESTED.store(true, Ordering::SeqCst);
     let mut guard = match active_slot().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),

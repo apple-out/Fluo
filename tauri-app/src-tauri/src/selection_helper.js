@@ -1163,4 +1163,257 @@
     },
     { capture: true, passive: true },
   );
+
+  // Real-time audible media playback detection for tab speaker badge
+  let lastAudibleState = false;
+  let audioCheckTimer = 0;
+  function checkAudibleMedia() {
+    audioCheckTimer = 0;
+    const els = document.querySelectorAll("video, audio");
+    let playing = false;
+    for (const el of els) {
+      if (!el.paused && !el.ended && !el.muted && (typeof el.volume !== "number" || el.volume > 0.01)) {
+        playing = true;
+        break;
+      }
+    }
+    if (playing !== lastAudibleState) {
+      lastAudibleState = playing;
+      postWebMessage({ type: "media-audio-state", playing });
+    }
+  }
+  function scheduleAudioCheck() {
+    if (!audioCheckTimer) {
+      audioCheckTimer = window.setTimeout(checkAudibleMedia, 120);
+    }
+  }
+  for (const evName of ["play", "playing", "pause", "ended", "volumechange", "emptied"]) {
+    document.addEventListener(evName, scheduleAudioCheck, true);
+  }
+
+  // Page primary language detection (for Chrome/Edge-style auto-translate banner & site rules)
+  window.__tbDetectPageLanguage = () => {
+    const sample = ((document.body && document.body.innerText) || "").slice(0, 2400);
+    let hangul = 0;
+    let kana = 0;
+    let cjk = 0;
+    let latin = 0;
+    for (let i = 0; i < sample.length; i++) {
+      const code = sample.charCodeAt(i);
+      if ((code >= 0xac00 && code <= 0xd7a3) || (code >= 0x3131 && code <= 0x318e)) hangul++;
+      else if (code >= 0x3040 && code <= 0x30ff) kana++;
+      else if (code >= 0x4e00 && code <= 0x9fff) cjk++;
+      else if ((code >= 0x0041 && code <= 0x005a) || (code >= 0x0061 && code <= 0x007a)) latin++;
+    }
+    const total = hangul + kana + cjk + latin;
+    if (total < 24) {
+      const htmlLang = (document.documentElement?.lang || "").toLowerCase();
+      if (htmlLang.startsWith("ko")) return "ko";
+      if (htmlLang.startsWith("ja")) return "ja";
+      if (htmlLang.startsWith("zh")) return "zh";
+      if (htmlLang.startsWith("en")) return "en";
+      return "unknown";
+    }
+    if (hangul / total > 0.18) return "ko";
+    if (kana > 8 || (kana + cjk) / total > 0.22 && kana > 0) return "ja";
+    if (cjk / total > 0.22 && kana === 0) return "zh";
+    if (latin / total > 0.45) return "en";
+    return "other";
+  };
+
+  window.setTimeout(() => {
+    if (location.protocol === "http:" || location.protocol === "https:") {
+      const lang = window.__tbDetectPageLanguage();
+      if (lang && lang !== "unknown") {
+        postWebMessage({ type: "page-language-detected", lang, url: location.href });
+      }
+    }
+  }, 650);
+
+  // Dynamic infinite-scroll / SPA mutation observer while inline translation is active
+  let dynamicObs = null;
+  let dynamicTimer = 0;
+  window.__tbSetDynamicTranslate = (enabled) => {
+    window.__tbDynamicTranslateActive = Boolean(enabled);
+    if (!enabled) {
+      if (dynamicObs) {
+        dynamicObs.disconnect();
+        dynamicObs = null;
+      }
+      if (dynamicTimer) {
+        clearTimeout(dynamicTimer);
+        dynamicTimer = 0;
+      }
+      return;
+    }
+    if (dynamicObs || !document.body || typeof MutationObserver === "undefined") return;
+    dynamicObs = new MutationObserver((mutations) => {
+      if (!window.__tbDynamicTranslateActive) return;
+      let hasMeaningfulAddition = false;
+      for (const m of mutations) {
+        for (const node of m.addedNodes || []) {
+          if (node.nodeType !== 1) continue;
+          const el = node;
+          if (
+            el.id?.startsWith("rb-") ||
+            el.hasAttribute?.("data-rb-inline-translation-for") ||
+            el.closest?.("[data-rb-inline-translation-for]")
+          ) {
+            continue;
+          }
+          const txt = (el.innerText || el.textContent || "").trim();
+          if (txt.length >= 25) {
+            hasMeaningfulAddition = true;
+            break;
+          }
+        }
+        if (hasMeaningfulAddition) break;
+      }
+      if (hasMeaningfulAddition && !dynamicTimer) {
+        dynamicTimer = window.setTimeout(() => {
+          dynamicTimer = 0;
+          if (window.__tbDynamicTranslateActive) {
+            postWebMessage({ type: "dynamic-blocks-added", url: location.href });
+          }
+        }, 900);
+      }
+    });
+    dynamicObs.observe(document.body, { childList: true, subtree: true });
+  };
+
+  // Edge-style Read Aloud (TTS) engine with paragraph highlight & auto-scroll
+  const ttsState = {
+    playing: false,
+    paused: false,
+    rate: 1.0,
+    index: 0,
+    elements: [],
+  };
+
+  function clearTtsHighlight() {
+    document.querySelectorAll("[data-rb-tts-active]").forEach((el) => {
+      el.removeAttribute("data-rb-tts-active");
+    });
+  }
+
+  function collectTtsElements() {
+    const translated = [...document.querySelectorAll("[data-rb-inline-translation-for]")].filter(
+      (el) => (el.innerText || el.textContent || "").trim().length > 1,
+    );
+    if (translated.length > 0) return translated;
+    const inlineOrig = [...document.querySelectorAll("[data-rb-inline-key]:not([hidden])")].filter(
+      (el) => (el.innerText || el.textContent || "").trim().length > 1,
+    );
+    if (inlineOrig.length > 0) return inlineOrig;
+    return [...document.querySelectorAll("article p, main p, p, h1, h2, h3, li")].filter((el) => {
+      const t = (el.innerText || el.textContent || "").trim();
+      return t.length >= 12 && el.offsetParent !== null;
+    });
+  }
+
+  function speakCurrentTtsIndex() {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    clearTtsHighlight();
+    if (!ttsState.playing) return;
+    if (ttsState.index < 0 || ttsState.index >= ttsState.elements.length) {
+      ttsState.playing = false;
+      ttsState.paused = false;
+      postWebMessage({ type: "tts-state", playing: false, paused: false, index: 0, total: ttsState.elements.length });
+      return;
+    }
+    const el = ttsState.elements[ttsState.index];
+    const text = (el.innerText || el.textContent || "").trim();
+    if (!text) {
+      ttsState.index++;
+      speakCurrentTtsIndex();
+      return;
+    }
+    el.setAttribute("data-rb-tts-active", "1");
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.rate = ttsState.rate;
+    const hasHangul = /[가-힣]/.test(text);
+    const hasKana = /[ぁ-んァ-ン]/.test(text);
+    const hasCjk = /[\u4e00-\u9fff]/.test(text);
+    utter.lang = hasHangul ? "ko-KR" : hasKana ? "ja-JP" : hasCjk ? "zh-CN" : "en-US";
+    utter.onend = () => {
+      if (!ttsState.playing || ttsState.paused) return;
+      ttsState.index++;
+      speakCurrentTtsIndex();
+    };
+    utter.onerror = () => {
+      if (!ttsState.playing || ttsState.paused) return;
+      ttsState.index++;
+      speakCurrentTtsIndex();
+    };
+    postWebMessage({
+      type: "tts-state",
+      playing: true,
+      paused: false,
+      index: ttsState.index + 1,
+      total: ttsState.elements.length,
+    });
+    window.speechSynthesis.speak(utter);
+  }
+
+  window.__tbTtsControl = (cmd, arg) => {
+    if (!("speechSynthesis" in window)) {
+      return { playing: false, paused: false, index: 0, total: 0, unsupported: true };
+    }
+    if (cmd === "start" || cmd === "toggle") {
+      if (ttsState.playing && cmd === "toggle") {
+        if (ttsState.paused) {
+          ttsState.paused = false;
+          window.speechSynthesis.resume();
+        } else {
+          ttsState.paused = true;
+          window.speechSynthesis.pause();
+        }
+      } else {
+        ttsState.elements = collectTtsElements();
+        ttsState.index = 0;
+        ttsState.playing = ttsState.elements.length > 0;
+        ttsState.paused = false;
+        speakCurrentTtsIndex();
+      }
+    } else if (cmd === "pause") {
+      ttsState.paused = true;
+      window.speechSynthesis.pause();
+    } else if (cmd === "resume") {
+      ttsState.paused = false;
+      window.speechSynthesis.resume();
+    } else if (cmd === "next") {
+      if (ttsState.elements.length > 0) {
+        ttsState.index = Math.min(ttsState.elements.length - 1, ttsState.index + 1);
+        ttsState.playing = true;
+        ttsState.paused = false;
+        speakCurrentTtsIndex();
+      }
+    } else if (cmd === "prev") {
+      if (ttsState.elements.length > 0) {
+        ttsState.index = Math.max(0, ttsState.index - 1);
+        ttsState.playing = true;
+        ttsState.paused = false;
+        speakCurrentTtsIndex();
+      }
+    } else if (cmd === "rate" && typeof arg === "number" && arg >= 0.5 && arg <= 2.5) {
+      ttsState.rate = arg;
+      if (ttsState.playing && !ttsState.paused) {
+        speakCurrentTtsIndex();
+      }
+    } else if (cmd === "stop") {
+      ttsState.playing = false;
+      ttsState.paused = false;
+      window.speechSynthesis.cancel();
+      clearTtsHighlight();
+    }
+    return {
+      playing: ttsState.playing,
+      paused: ttsState.paused,
+      rate: ttsState.rate,
+      index: ttsState.playing ? ttsState.index + 1 : 0,
+      total: ttsState.elements.length,
+    };
+  };
 })();

@@ -531,7 +531,7 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
         .focused(false)
         .incognito(tab.is_private)
         .background_color(bg_color)
-        .devtools(false)
+        .devtools(true)
         .additional_browser_args(&webview_args)
         .browser_extensions_enabled(extensions_enabled)
         .initialization_script(SELECTION_HELPER_SCRIPT)
@@ -549,21 +549,25 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
                         .and_then(|u| u.host_str().map(|s| s.to_ascii_lowercase()))
                         .unwrap_or_default()
                 };
-                let target_host = url.host_str().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                let target_host = url
+                    .host_str()
+                    .map(|s| s.to_ascii_lowercase())
+                    .unwrap_or_default();
                 let same_host = !source_origin.is_empty() && source_origin == target_host;
                 let (policy, allowlist) = {
                     let state = app_for_popup.state::<AppState>();
                     let s = lock(&state.settings);
                     (s.popup_policy.clone(), s.popup_allowed_origins.clone())
                 };
-                let is_allowed = same_host || allowlist.iter().any(|entry| {
-                    let e = entry.trim().to_ascii_lowercase();
-                    !e.is_empty()
-                        && (source_origin == e
-                            || source_origin.ends_with(&format!(".{e}"))
-                            || target_host == e
-                            || target_host.ends_with(&format!(".{e}")))
-                });
+                let is_allowed = same_host
+                    || allowlist.iter().any(|entry| {
+                        let e = entry.trim().to_ascii_lowercase();
+                        !e.is_empty()
+                            && (source_origin == e
+                                || source_origin.ends_with(&format!(".{e}"))
+                                || target_host == e
+                                || target_host.ends_with(&format!(".{e}")))
+                    });
                 let should_block = match policy.as_str() {
                     "allow" => false,
                     "block-all" => !is_allowed,
@@ -652,7 +656,7 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
             let _ = app_for_download.emit_to("overlay", "download-status", ());
             true
         })
-        .on_permission_request(|_, _| PermissionResponse::Deny)
+        .on_permission_request(|_, _| PermissionResponse::Allow)
         .on_document_title_changed(move |_, title| {
             update_title(&app_for_title, &tab_for_title, &title);
         })
@@ -935,10 +939,13 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                                 (0xbb | 0x6b, _) => Some("zoom-in"),
                                 (0xbd | 0x6d, _) => Some("zoom-out"),
                                 (0x30 | 0x6e, _) => Some("zoom-reset"),
+                                (0x49, true) => Some("devtools"),
                                 _ => None,
                             }
                         } else if !control && !alt && shift && key == 0x1b {
                             Some("task-manager")
+                        } else if !control && !alt && key == 0x7b {
+                            Some("devtools")
                         } else if !control && !alt && key == 0x7a {
                             // F11 toggles full screen like Chrome and Edge.
                             Some("fullscreen")
@@ -958,10 +965,15 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                             };
                             if is_settings {
                                 if let Some(wv) = active_webview(&app).ok() {
-                                    let _ = wv.eval(format!("window.__tbSettingsNav?.(\"{dir}\");"));
+                                    let _ =
+                                        wv.eval(format!("window.__tbSettingsNav?.(\"{dir}\");"));
                                 }
                             } else {
-                                let _ = if key == 0xa6 { go_back(&app) } else { go_forward(&app) };
+                                let _ = if key == 0xa6 {
+                                    go_back(&app)
+                                } else {
+                                    go_forward(&app)
+                                };
                             }
                             args.SetHandled(true)?;
                             return Ok(());
@@ -969,6 +981,11 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                             None
                         };
                         if let Some(shortcut) = shortcut {
+                            if shortcut == "devtools" {
+                                open_webview_devtools(&app);
+                                args.SetHandled(true)?;
+                                return Ok(());
+                            }
                             if (shortcut == "focus-address" || shortcut == "find-in-page")
                                 && let Some(shell) = app.get_webview("shell")
                             {
@@ -982,44 +999,49 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                 let mut token = 0;
                 controller.add_AcceleratorKeyPressed(&handler, &mut token)?;
                 if let Ok(core) = controller.CoreWebView2() {
-                    let msg_handler = WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
-                        let Some(args) = args else {
-                            return Ok(());
-                        };
-                        let mut message = PWSTR::null();
-                        if args.TryGetWebMessageAsString(&mut message).is_ok() && !message.is_null() {
-                            let text = take_pwstr(message);
-                            if text.contains("\"internal-ready\"") || text.contains("\"first-paint\"") {
-                                let is_internal = text.contains("\"internal-ready\"");
-                                let is_active = {
-                                    let state = app_for_msg.state::<AppState>();
-                                    let tabs = lock(&state.tabs);
-                                    tabs.active_tab()
-                                        .is_some_and(|t| t.label == label_for_msg)
-                                };
-                                if is_active {
-                                    show_only_focus(&app_for_msg, &label_for_msg, is_internal);
-                                }
+                    let msg_handler =
+                        WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
+                            let Some(args) = args else {
                                 return Ok(());
-                            }
-                            if text.contains("\"page-contextmenu\"") {
+                            };
+                            let mut message = PWSTR::null();
+                            if args.TryGetWebMessageAsString(&mut message).is_ok()
+                                && !message.is_null()
+                            {
+                                let text = take_pwstr(message);
+                                if text.contains("\"internal-ready\"")
+                                    || text.contains("\"first-paint\"")
                                 {
-                                    let state = app_for_msg.state::<AppState>();
-                                    let mut tabs = lock(&state.tabs);
-                                    tabs.overlay_open = true;
-                                    tabs.overlay_blur = false;
+                                    let is_internal = text.contains("\"internal-ready\"");
+                                    let is_active = {
+                                        let state = app_for_msg.state::<AppState>();
+                                        let tabs = lock(&state.tabs);
+                                        tabs.active_tab().is_some_and(|t| t.label == label_for_msg)
+                                    };
+                                    if is_active {
+                                        show_only_focus(&app_for_msg, &label_for_msg, is_internal);
+                                    }
+                                    return Ok(());
                                 }
-                                let _ = sync_shell_bounds(&app_for_msg);
+                                if text.contains("\"page-contextmenu\"") {
+                                    {
+                                        let state = app_for_msg.state::<AppState>();
+                                        let mut tabs = lock(&state.tabs);
+                                        tabs.overlay_open = true;
+                                        tabs.overlay_blur = false;
+                                    }
+                                    let _ = sync_shell_bounds(&app_for_msg);
+                                    if let Some(shell) = app_for_msg.get_webview("shell") {
+                                        let _ = shell.set_focus();
+                                    }
+                                }
                                 if let Some(shell) = app_for_msg.get_webview("shell") {
-                                    let _ = shell.set_focus();
+                                    let _ = shell
+                                        .eval(format!("window.__ON_BROWSER_MESSAGE__?.({text});"));
                                 }
                             }
-                            if let Some(shell) = app_for_msg.get_webview("shell") {
-                                let _ = shell.eval(format!("window.__ON_BROWSER_MESSAGE__?.({text});"));
-                            }
-                        }
-                        Ok(())
-                    }));
+                            Ok(())
+                        }));
                     let mut msg_token = 0;
                     let _ = core.add_WebMessageReceived(&msg_handler, &mut msg_token);
                 }
@@ -1059,11 +1081,7 @@ fn install_adblock_filter(webview: &Webview, app: AppHandle, tab_id: String) -> 
                         } else {
                             Vec::new()
                         };
-                        (
-                            page_url,
-                            settings.tracking_prevention.clone(),
-                            allowlist,
-                        )
+                        (page_url, settings.tracking_prevention.clone(), allowlist)
                     };
 
                     let request = args.Request()?;
@@ -1160,7 +1178,14 @@ fn update_page_load(app: &AppHandle, tab_id: &str, url: &str, event: PageLoadEve
             "accent": tabs.ui_accent,
             "tinted": tabs.ui_tinted,
         });
-        (restore_scroll, visit, finished_url, tabs.top, url.to_string(), ui_theme)
+        (
+            restore_scroll,
+            visit,
+            finished_url,
+            tabs.top,
+            url.to_string(),
+            ui_theme,
+        )
     };
     let snapshot = lock(&state.tabs).snapshot();
     if let Some((url, title)) = visit {
@@ -1944,10 +1969,15 @@ pub fn select_tab(app: &AppHandle, tab_id: &str) -> Result<BrowserState, String>
         }
         let state = app.state::<AppState>();
         let mut tabs = lock(&state.tabs);
-        if let Some(ws) = tabs.items.iter_mut().find(|item| item.id == tab_id).map(|item| {
-            item.last_active_at = crate::db::now_secs();
-            item.workspace_id.clone()
-        }) {
+        if let Some(ws) = tabs
+            .items
+            .iter_mut()
+            .find(|item| item.id == tab_id)
+            .map(|item| {
+                item.last_active_at = crate::db::now_secs();
+                item.workspace_id.clone()
+            })
+        {
             tabs.active = Some(tab_id.to_string());
             tabs.active_workspace = ws;
         }
@@ -2301,7 +2331,11 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
             tab.loading = true;
         }
         (
-            if old_label != tab.label { Some(old_label) } else { None },
+            if old_label != tab.label {
+                Some(old_label)
+            } else {
+                None
+            },
             tab.clone(),
             top,
             tab.is_private,
@@ -2319,9 +2353,7 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
         if let Some(old_wv) = app.get_webview(&old_label) {
             let _ = old_wv.close();
         }
-    } else if !is_start_target
-        && let Some(webview) = app.get_webview(&updated_tab.label)
-    {
+    } else if !is_start_target && let Some(webview) = app.get_webview(&updated_tab.label) {
         let _ = webview.eval("window.__tbPageFadeOut?.();");
         let url = url::Url::parse(&resolved).map_err(|error| error.to_string())?;
         webview
@@ -2390,7 +2422,11 @@ fn go_to_history(app: &AppHandle, delta: isize) -> Result<BrowserState, String> 
         tab.scroll_x = entry.scroll_x;
         tab.scroll_y = entry.scroll_y;
         (
-            if old_label != tab.label { Some(old_label) } else { None },
+            if old_label != tab.label {
+                Some(old_label)
+            } else {
+                None
+            },
             tab.clone(),
             top,
             entry.url,
@@ -2664,10 +2700,10 @@ pub fn open_overlay(
     tab_id: Option<String>,
 ) -> Result<(), String> {
     let kind = match kind {
-        "menu" | "adblock" | "site-security" | "bookmark-edit" | "translate" | "workspace" | "tab-menu" | "chrome-menu"
-        | "page-menu" | "tab-search" | "task-manager" | "bookmarks" | "glossary" | "history"
-        | "visits" | "downloads" | "settings" | "feedback" | "rename-window"
-        | "export-project" | "onboarding" => kind,
+        "menu" | "adblock" | "site-security" | "bookmark-edit" | "translate" | "workspace"
+        | "tab-menu" | "chrome-menu" | "page-menu" | "tab-search" | "task-manager"
+        | "bookmarks" | "glossary" | "history" | "visits" | "downloads" | "settings"
+        | "feedback" | "rename-window" | "export-project" | "onboarding" => kind,
         _ => return Err("알 수 없는 브라우저 오버레이입니다.".into()),
     };
 
@@ -2715,6 +2751,20 @@ pub fn close_overlay(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+pub fn open_webview_devtools(app: &AppHandle) {
+    let Ok(webview) = active_webview(app) else {
+        return;
+    };
+    #[cfg(windows)]
+    {
+        let _ = webview.with_webview(|platform| unsafe {
+            if let Ok(core) = platform.controller().CoreWebView2() {
+                let _ = core.OpenDevToolsWindow();
+            }
+        });
+    }
+}
+
 pub fn run_page_context_action(
     app: &AppHandle,
     action: &str,
@@ -2722,7 +2772,21 @@ pub fn run_page_context_action(
     x: Option<f64>,
     y: Option<f64>,
 ) -> Result<(), String> {
+    if action == "inspect" {
+        open_webview_devtools(app);
+        return Ok(());
+    }
     let webview = active_webview(app)?;
+    if let Some(tts_cmd) = action.strip_prefix("tts-") {
+        let rate_num = text
+            .as_deref()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(1.0);
+        let cmd_json = serde_json::to_string(tts_cmd).map_err(|e| e.to_string())?;
+        return webview
+            .eval(format!("window.__tbTtsControl?.({cmd_json}, {rate_num});"))
+            .map_err(|error| error.to_string());
+    }
     let action_json = serde_json::to_string(action).map_err(|e| e.to_string())?;
     let text_json = serde_json::to_string(&text).map_err(|e| e.to_string())?;
     let x_json = serde_json::to_string(&x).map_err(|e| e.to_string())?;
@@ -2942,7 +3006,9 @@ pub async fn apply_inline_translations(
         .replace("__LINE_HEIGHT__", &format!("{line_height:.2}"))
         .replace("__BILINGUAL__", if bilingual { "true" } else { "false" })
         .replace("__UI_LANG__", &ui_lang_json);
-    evaluate_count(&webview, &script).await
+    let count = evaluate_count(&webview, &script).await?;
+    let _ = webview.eval("window.__tbSetDynamicTranslate?.(true);");
+    Ok(count)
 }
 
 pub async fn pick_region_article(app: &AppHandle) -> Result<Article, String> {
@@ -3073,6 +3139,7 @@ pub async fn restore_inline_translations(
         app.get_webview(&tab.label)
             .ok_or_else(|| "브라우저 WebView를 찾지 못했습니다.".to_string())?
     };
+    let _ = webview.eval("window.__tbSetDynamicTranslate?.(false);");
     evaluate_count(&webview, INLINE_RESTORE_SCRIPT).await
 }
 
@@ -3393,7 +3460,11 @@ mod tests {
         assert!(act.is_none());
         assert_eq!(tabs.active_workspace, ws2);
         assert_eq!(
-            tabs.items.iter().find(|t| t.id == t_ws1.id).unwrap().workspace_id,
+            tabs.items
+                .iter()
+                .find(|t| t.id == t_ws1.id)
+                .unwrap()
+                .workspace_id,
             "default"
         );
 

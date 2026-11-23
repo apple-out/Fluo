@@ -187,18 +187,55 @@ struct TranslateSheet: View {
                             }
                         }
 
-                        Button {
-                            dismiss()
-                            store.restoreOriginal()
-                        } label: {
-                            Label(t("tr.original"), systemImage: "arrow.uturn.backward")
-                                .font(.subheadline.weight(.semibold))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .contentShape(Capsule())
+                        HStack(spacing: 10) {
+                            Button {
+                                dismiss()
+                                store.restoreOriginal()
+                            } label: {
+                                Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(LiquidPressButtonStyle())
+                            .liquidGlassPill(interactive: true)
+
+                            Button {
+                                dismiss()
+                                store.startOrToggleTTS()
+                            } label: {
+                                Label(t("tr.tts"), systemImage: store.isSpeakingTTS ? "speaker.wave.3.fill" : "speaker.wave.2")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(store.isSpeakingTTS ? .white : .primary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(LiquidPressButtonStyle())
+                            .liquidGlassPill(
+                                tint: store.isSpeakingTTS ? FluoThemeTokens.indigo : .clear,
+                                interactive: true,
+                                prominent: store.isSpeakingTTS
+                            )
                         }
-                        .buttonStyle(LiquidPressButtonStyle())
-                        .liquidGlassPill(interactive: true)
+
+                        if !store.currentHost.isEmpty {
+                            HStack {
+                                Label(t("tr.alwaysHost"), systemImage: "globe.badge.chevron.backward")
+                                    .font(.caption.weight(.semibold))
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { store.isCurrentHostAlwaysTranslated },
+                                    set: { _ in store.toggleAlwaysTranslateCurrentHost() }
+                                ))
+                                .labelsHidden()
+                                .tint(FluoThemeTokens.indigo)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .liquidGlass(cornerRadius: 18)
+                        }
 
                         // Translation styles & typography card
                         VStack(alignment: .leading, spacing: 12) {
@@ -313,11 +350,21 @@ struct TabsSheet: View {
     @State private var showRenameWorkspace = false
     @State private var wsTargetId = ""
     @State private var wsDraftName = ""
+    @State private var tabSearch = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
 
     private var activeWorkspace: WorkspaceItem? {
         store.userData.workspaces.first(where: { $0.id == store.userData.activeWorkspaceId })
+    }
+
+    private var filteredTabs: [BrowserTab] {
+        let q = tabSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let list = store.activeWorkspaceTabs
+        if q.isEmpty { return list }
+        return list.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.urlString.localizedCaseInsensitiveContains(q)
+        }
     }
 
     var body: some View {
@@ -408,11 +455,11 @@ struct TabsSheet: View {
                     }
 
                     List {
-                        ForEach(store.activeWorkspaceTabs) { tab in
+                        ForEach(filteredTabs) { tab in
                             let isCurrent = tab.id == store.activeTabId
                             HStack(spacing: 10) {
                                 Button {
-                                    store.activeTabId = tab.id
+                                    store.selectTab(tab.id)
                                     dismiss()
                                 } label: {
                                     HStack(spacing: 10) {
@@ -420,6 +467,13 @@ struct TabsSheet: View {
                                             Image(systemName: "pin.fill")
                                                 .foregroundStyle(FluoThemeTokens.indigo)
                                                 .font(.caption)
+                                        }
+                                        if tab.isSleeping {
+                                            Text(t("tabs.sleepingBadge"))
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(Color.secondary.opacity(0.22), in: Capsule())
                                         }
                                         if tab.isPrivate {
                                             Text(t("tabs.privateBadge"))
@@ -477,12 +531,33 @@ struct TabsSheet: View {
                                     Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: tab.isPinned ? "pin.slash" : "pin")
                                 }
                                 .tint(FluoThemeTokens.indigo)
+
+                                Button {
+                                    store.duplicateTab(tab.id)
+                                } label: {
+                                    Label(t("tabs.duplicate"), systemImage: "plus.square.on.square")
+                                }
+                                .tint(FluoThemeTokens.cyan)
                             }
                             .contextMenu {
                                 Button {
                                     store.togglePinTab(tab.id)
                                 } label: {
                                     Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
+                                }
+
+                                Button {
+                                    store.duplicateTab(tab.id)
+                                } label: {
+                                    Label(t("tabs.duplicate"), systemImage: "plus.square.on.square")
+                                }
+
+                                if !tab.isStartPage && tab.id != store.activeTabId && !tab.isSleeping {
+                                    Button {
+                                        tab.putToSleep()
+                                    } label: {
+                                        Label(t("tabs.sleep"), systemImage: "moon.zzz")
+                                    }
                                 }
 
                                 Menu(t("tabs.moveWs")) {
@@ -500,9 +575,15 @@ struct TabsSheet: View {
                                 }
                             }
                         }
+                        .onMove { from, to in
+                            if tabSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                store.moveTabsInCurrentWorkspace(fromOffsets: from, toOffset: to)
+                            }
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
+                    .searchable(text: $tabSearch, prompt: t("tabs.search"))
                 }
             }
             .navigationTitle(t("tabs.title"))
@@ -636,6 +717,21 @@ struct MenuSheet: View {
                                     copiedFeedback = true
                                 }
                                 Divider().opacity(0.25)
+
+                                menuRow(t("tr.tts"), icon: store.isSpeakingTTS ? "speaker.wave.3.fill" : "speaker.wave.2") {
+                                    dismiss()
+                                    store.startOrToggleTTS()
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.exportMd"), icon: "doc.richtext") {
+                                    Task {
+                                        let md = await store.exportCurrentPageMarkdown()
+                                        UIPasteboard.general.string = md
+                                        copiedFeedback = true
+                                    }
+                                }
+                                Divider().opacity(0.25)
                             }
 
                             HStack {
@@ -694,6 +790,8 @@ struct MenuSheet: View {
                             menuRow(t("menu.trHistory"), icon: "clock.arrow.2.circlepath") { openSheet(.translationHistory) }
                             Divider().opacity(0.25)
                             menuRow(t("menu.glossary"), icon: "character.book.closed") { openSheet(.glossary) }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.downloads"), icon: "arrow.down.circle") { openSheet(.downloads) }
                         }
                         .liquidGlass(cornerRadius: 22)
 
@@ -957,6 +1055,11 @@ struct SiteSecuritySheet: View {
                                 get: { store.isCurrentHostAdBlockEnabled },
                                 set: { _ in store.toggleCurrentHostAdBlock() }
                             ))
+
+                            Toggle(t("tr.alwaysHost"), isOn: Binding(
+                                get: { store.isCurrentHostAlwaysTranslated },
+                                set: { _ in store.toggleAlwaysTranslateCurrentHost() }
+                            ))
                         }
 
                         Toggle(t("menu.desktop"), isOn: Binding(
@@ -976,6 +1079,15 @@ struct SiteSecuritySheet: View {
                                 set: { store.activeTab.applyPageZoom($0) }
                             ), in: 0.7...1.8, step: 0.1)
                             .tint(FluoThemeTokens.indigo)
+                        }
+
+                        if !store.currentHost.isEmpty {
+                            Button(t("sec.clearHostData"), role: .destructive) {
+                                Task {
+                                    await store.clearCurrentHostSiteData()
+                                    dismiss()
+                                }
+                            }
                         }
                     }
                     .listRowBackground(Color.white.opacity(0.08))
@@ -1086,14 +1198,21 @@ struct GlossarySheet: View {
     @State private var selectedFolder = "__all__"
     @State private var targetFolder = "Default"
     @State private var searchQuery = ""
+    @State private var editingId: String? = nil
     @State private var src = ""
     @State private var dst = ""
     @State private var caseSensitive = false
+    @State private var exactMatch = false
+    @State private var useRegex = false
+    @State private var doNotTranslate = false
+    @State private var noteDraft = ""
 
     @State private var showNewFolder = false
     @State private var showRenameFolder = false
     @State private var folderRenameTarget = "Default"
     @State private var folderDraft = ""
+    @State private var showImportCSVAlert = false
+    @State private var csvImportDraft = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
 
@@ -1164,12 +1283,47 @@ struct GlossarySheet: View {
                             }
                         }
                         Toggle(t("gl.case"), isOn: $caseSensitive)
-                        Button(t("gl.add")) {
-                            store.addGlossaryItem(source: src, target: dst, caseSensitive: caseSensitive, folder: targetFolder)
-                            src = ""
-                            dst = ""
+                        Toggle(t("gl.exact"), isOn: $exactMatch)
+                        Toggle(t("gl.regex"), isOn: $useRegex)
+                        Toggle(t("gl.dnt"), isOn: $doNotTranslate)
+                        TextField(t("gl.note"), text: $noteDraft)
+
+                        HStack {
+                            Button(editingId == nil ? t("gl.add") : t("common.save")) {
+                                store.upsertGlossaryItem(
+                                    id: editingId,
+                                    source: src,
+                                    target: dst,
+                                    caseSensitive: caseSensitive,
+                                    folder: targetFolder,
+                                    exactMatch: exactMatch,
+                                    useRegex: useRegex,
+                                    doNotTranslate: doNotTranslate,
+                                    note: noteDraft
+                                )
+                                editingId = nil
+                                src = ""
+                                dst = ""
+                                exactMatch = false
+                                useRegex = false
+                                doNotTranslate = false
+                                noteDraft = ""
+                            }
+                            .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            if editingId != nil {
+                                Spacer()
+                                Button(t("common.cancel"), role: .cancel) {
+                                    editingId = nil
+                                    src = ""
+                                    dst = ""
+                                    exactMatch = false
+                                    useRegex = false
+                                    doNotTranslate = false
+                                    noteDraft = ""
+                                }
+                            }
                         }
-                        .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .listRowBackground(Color.white.opacity(0.08))
 
@@ -1179,19 +1333,42 @@ struct GlossarySheet: View {
                         } else {
                             ForEach(filteredGlossary) { item in
                                 HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(spacing: 6) {
-                                            Text(item.source).font(.subheadline.weight(.semibold))
-                                            Text(item.folder)
-                                                .font(.caption2.bold())
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(FluoThemeTokens.indigo.opacity(0.18), in: Capsule())
+                                    Button {
+                                        editingId = item.id
+                                        src = item.source
+                                        dst = item.target
+                                        targetFolder = item.folder
+                                        caseSensitive = item.caseSensitive
+                                        exactMatch = item.exactMatch
+                                        useRegex = item.useRegex
+                                        doNotTranslate = item.doNotTranslate
+                                        noteDraft = item.note
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            HStack(spacing: 6) {
+                                                Text(item.source).font(.subheadline.weight(.semibold))
+                                                Text(item.folder)
+                                                    .font(.caption2.bold())
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(FluoThemeTokens.indigo.opacity(0.18), in: Capsule())
+                                                if item.exactMatch {
+                                                    Text("Exact").font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                                if item.useRegex {
+                                                    Text("Regex").font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                            }
+                                            Text(item.doNotTranslate || item.target.isEmpty ? "(keep original)" : item.target)
+                                                .font(.caption).foregroundStyle(.secondary)
+                                            if !item.note.isEmpty {
+                                                Text(item.note).font(.caption2).foregroundStyle(.secondary)
+                                            }
                                         }
-                                        Text(item.target.isEmpty ? "(keep original)" : item.target)
-                                            .font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                     }
-                                    Spacer()
+                                    .buttonStyle(.plain)
+
                                     Toggle("", isOn: Binding(
                                         get: { item.enabled },
                                         set: { _ in store.toggleGlossaryEnabled(item.id) }
@@ -1217,8 +1394,36 @@ struct GlossarySheet: View {
             .background { LiquidAuroraBackground() }
             .navigationTitle(t("gl.title"))
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Menu {
+                        ShareLink(item: store.exportGlossaryCSV()) {
+                            Label(t("gl.exportCsv"), systemImage: "square.and.arrow.up")
+                        }
+                        Button {
+                            UIPasteboard.general.string = store.exportGlossaryCSV()
+                        } label: {
+                            Label(t("gl.exportCsv"), systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            csvImportDraft = UIPasteboard.general.string ?? ""
+                            showImportCSVAlert = true
+                        } label: {
+                            Label(t("gl.importCsv"), systemImage: "square.and.arrow.down")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
+                }
+            }
+            .alert(t("gl.importCsv"), isPresented: $showImportCSVAlert) {
+                TextField("source,target,folder", text: $csvImportDraft)
+                Button(t("common.cancel"), role: .cancel) {}
+                Button(t("common.add")) {
+                    let folder = selectedFolder == "__all__" ? "Default" : selectedFolder
+                    _ = store.importGlossaryCSV(csvImportDraft, defaultFolder: folder)
                 }
             }
             .alert(t("gl.newFolder"), isPresented: $showNewFolder) {
@@ -1451,6 +1656,11 @@ struct SettingsSheet: View {
                             )
                         }
 
+                    Toggle(t("tr.autoSetting"), isOn: $store.userData.autoTranslateEnabled)
+                        .onChange(of: store.userData.autoTranslateEnabled) { _ in
+                            store.savePreferences()
+                        }
+
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
                             Text(t("set.zoom"))
@@ -1581,6 +1791,31 @@ struct SettingsSheet: View {
                     }
                     .listRowBackground(Color.white.opacity(0.08))
                 }
+
+                Section(t("set.backupSection")) {
+                    if let json = store.userData.exportJSONString() {
+                        ShareLink(item: json) {
+                            Label(t("set.exportJson"), systemImage: "square.and.arrow.up")
+                        }
+                    }
+                    Button {
+                        if let json = store.userData.exportJSONString() {
+                            UIPasteboard.general.string = json
+                        }
+                    } label: {
+                        Label(t("set.exportJson"), systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        if let raw = UIPasteboard.general.string,
+                           let imported = FluoUserDataSnapshot.importJSONString(raw) {
+                            store.userData = imported
+                            store.savePreferences()
+                        }
+                    } label: {
+                        Label(t("set.importJson"), systemImage: "square.and.arrow.down")
+                    }
+                }
+                .listRowBackground(Color.white.opacity(0.08))
             }
             .scrollContentBackground(.hidden)
             .background { LiquidAuroraBackground() }
@@ -1595,6 +1830,70 @@ struct SettingsSheet: View {
             }
             .alert(t("set.cleared"), isPresented: $showClearedAlert) {
                 Button(t("common.done"), role: .cancel) {}
+            }
+        }
+    }
+}
+
+struct DownloadsSheet: View {
+    @ObservedObject var store: BrowserStore
+    @Environment(\.dismiss) private var dismiss
+
+    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if store.userData.downloads.isEmpty {
+                    Text(t("dl.empty"))
+                        .foregroundStyle(.secondary)
+                        .listRowBackground(Color.white.opacity(0.06))
+                } else {
+                    ForEach(store.userData.downloads) { item in
+                        HStack(spacing: 12) {
+                            Image(systemName: "doc.fill")
+                                .foregroundStyle(FluoThemeTokens.indigo)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.fileName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text(ByteCountFormatter.string(fromByteCount: item.byteSize, countStyle: .file))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(item.sourceURL)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            if FileManager.default.fileExists(atPath: item.localPath) {
+                                ShareLink(item: URL(fileURLWithPath: item.localPath)) {
+                                    Image(systemName: "square.and.arrow.up")
+                                        .font(.subheadline)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .listRowBackground(Color.white.opacity(0.08))
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                try? FileManager.default.removeItem(atPath: item.localPath)
+                                store.userData.downloads.removeAll { $0.id == item.id }
+                                store.userData.save()
+                            } label: {
+                                Text(t("set.delete"))
+                            }
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
+            .navigationTitle(t("dl.title"))
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(t("common.done")) { dismiss() }
+                }
             }
         }
     }

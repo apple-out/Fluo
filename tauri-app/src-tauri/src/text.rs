@@ -97,6 +97,27 @@ pub fn resolve_address(input: &str, search_engine: &str) -> Result<String, Strin
     if trimmed.is_empty() {
         return Err("주소를 입력하세요.".into());
     }
+    if let Some((prefix, rest)) = trimmed.split_once(char::is_whitespace) {
+        let query = rest.trim();
+        if !query.is_empty() && prefix.starts_with('@') {
+            let p = prefix.to_ascii_lowercase();
+            let keyword_target: Option<(&str, &str)> = match p.as_str() {
+                "@n" | "@naver" => Some(("https://search.naver.com/search.naver", "query")),
+                "@namu" => Some(("https://namu.wiki/Go", "q")),
+                "@yt" | "@youtube" => Some(("https://www.youtube.com/results", "search_query")),
+                "@w" | "@wiki" => Some(("https://en.wikipedia.org/w/index.php", "search")),
+                "@g" | "@google" => Some(("https://www.google.com/search", "q")),
+                "@ddg" => Some(("https://duckduckgo.com/", "q")),
+                "@b" | "@bing" => Some(("https://www.bing.com/search", "q")),
+                _ => None,
+            };
+            if let Some((endpoint, param)) = keyword_target {
+                let mut search = url::Url::parse(endpoint).expect("static keyword URL");
+                search.query_pairs_mut().append_pair(param, query);
+                return Ok(search.to_string());
+            }
+        }
+    }
     if let Some(index) = trimmed.find("://") {
         let scheme = trimmed[..index].to_ascii_lowercase();
         if !matches!(scheme.as_str(), "http" | "https") {

@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import Foundation
 import UIKit
@@ -9,13 +10,43 @@ enum InlineDisplayMode: String {
     case bilingual
 }
 
+struct OmniboxSuggestion: Identifiable, Hashable {
+    enum Kind: String, Hashable {
+        case calculation
+        case switchTab
+        case bookmark
+        case history
+        case search
+    }
+    var id: String
+    var kind: Kind
+    var title: String
+    var subtitle: String
+    var targetURLOrQuery: String
+    var tabId: UUID?
+}
+
+private final class FluoScriptMessageProxy: NSObject, WKScriptMessageHandler {
+    weak var tab: BrowserTab?
+    init(tab: BrowserTab) {
+        self.tab = tab
+    }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        Task { @MainActor in
+            self.tab?.onScriptAction?(body)
+        }
+    }
+}
+
 final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate {
-    let id = UUID()
+    let id: UUID
     let webView: WKWebView
 
     @Published var workspaceId: String
     @Published var isPrivate: Bool
     @Published var isPinned: Bool = false
+    @Published var isSleeping: Bool = false
     @Published var isDesktopMode: Bool = false
     @Published var pageZoom: Double = 1.0
     @Published var urlString: String
@@ -25,6 +56,10 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     @Published var canGoBack: Bool = false
     @Published var canGoForward: Bool = false
     @Published var displayMode: InlineDisplayMode = .original
+    @Published var pageErrorText: String? = nil
+    @Published var detectedLanguage: String = "unknown"
+
+    var lastActiveAt: Date = Date()
 
     var isStartPage: Bool {
         urlString == FluoUserDataSnapshot.startPageURL
@@ -35,6 +70,9 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     var onScrollDockCollapseChanged: ((Bool) -> Void)?
     var onTwoFingerTap: (() -> Void)?
     var onOpenNewTab: ((URL) -> Void)?
+    var onScriptAction: (([String: Any]) -> Void)?
+    var onDownloadRequested: ((URL, String?) -> Void)?
+    var onPageFinishedLoad: ((BrowserTab) -> Void)?
 
     private var obsProgress: NSKeyValueObservation?
     private var obsLoading: NSKeyValueObservation?
@@ -43,19 +81,119 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     private let refreshControl = UIRefreshControl()
     private var panAnchorY: CGFloat = 0
 
-    init(initialURL: URL, workspaceId: String, isPrivate: Bool = false) {
+    private static let helperUserScriptSource = """
+    (() => {
+      if (window.__fluoMobileHelperInstalled) return;
+      window.__fluoMobileHelperInstalled = true;
+      const post = (payload) => {
+        try {
+          window.webkit?.messageHandlers?.fluoAction?.postMessage(payload);
+        } catch {}
+      };
+      let selTimer = 0;
+      document.addEventListener("selectionchange", () => {
+        clearTimeout(selTimer);
+        selTimer = setTimeout(() => {
+          const text = (window.getSelection ? window.getSelection().toString() : "").trim();
+          post({ type: "selection-changed", text: text.slice(0, 600) });
+        }, 160);
+      });
+
+      window.__fluoDetectLanguage = () => {
+        const sample = ((document.body && document.body.innerText) || "").slice(0, 2200);
+        let hangul = 0, kana = 0, cjk = 0, latin = 0;
+        for (let i = 0; i < sample.length; i++) {
+          const c = sample.charCodeAt(i);
+          if ((c >= 0xac00 && c <= 0xd7a3) || (c >= 0x3131 && c <= 0x318e)) hangul++;
+          else if (c >= 0x3040 && c <= 0x30ff) kana++;
+          else if (c >= 0x4e00 && c <= 0x9fff) cjk++;
+          else if ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) latin++;
+        }
+        const total = hangul + kana + cjk + latin;
+        if (total < 24) {
+          const hl = (document.documentElement?.lang || "").toLowerCase();
+          if (hl.startsWith("ko")) return "ko";
+          if (hl.startsWith("ja")) return "ja";
+          if (hl.startsWith("zh")) return "zh";
+          if (hl.startsWith("en")) return "en";
+          return "unknown";
+        }
+        if (hangul / total > 0.18) return "ko";
+        if (kana > 8 || ((kana + cjk) / total > 0.22 && kana > 0)) return "ja";
+        if (cjk / total > 0.22 && kana === 0) return "zh";
+        if (latin / total > 0.45) return "en";
+        return "other";
+      };
+
+      setTimeout(() => {
+        if (location.protocol === "http:" || location.protocol === "https:") {
+          post({ type: "page-language-detected", lang: window.__fluoDetectLanguage(), url: location.href });
+        }
+      }, 600);
+
+      let dynObs = null;
+      let dynTimer = 0;
+      window.__fluoSetDynamicObserver = (enabled) => {
+        window.__fluoDynamicOn = Boolean(enabled);
+        if (!enabled) {
+          if (dynObs) { dynObs.disconnect(); dynObs = null; }
+          if (dynTimer) { clearTimeout(dynTimer); dynTimer = 0; }
+          return;
+        }
+        if (dynObs || !document.body || typeof MutationObserver === "undefined") return;
+        dynObs = new MutationObserver((mutations) => {
+          if (!window.__fluoDynamicOn) return;
+          let added = false;
+          for (const m of mutations) {
+            for (const n of m.addedNodes || []) {
+              if (n.nodeType !== 1) continue;
+              if (n.id?.startsWith("rb-") || n.hasAttribute?.("data-rb-inline-translation-for") || n.closest?.("[data-rb-inline-translation-for]")) continue;
+              if (((n.innerText || n.textContent || "").trim()).length >= 30) { added = true; break; }
+            }
+            if (added) break;
+          }
+          if (added && !dynTimer) {
+            dynTimer = setTimeout(() => {
+              dynTimer = 0;
+              if (window.__fluoDynamicOn) post({ type: "dynamic-blocks-added", url: location.href });
+            }, 950);
+          }
+        });
+        dynObs.observe(document.body, { childList: true, subtree: true });
+      };
+    })();
+    """
+
+    init(
+        id: UUID = UUID(),
+        initialURL: URL,
+        workspaceId: String,
+        isPrivate: Bool = false,
+        deferLoad: Bool = false
+    ) {
+        self.id = id
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         if isPrivate {
             config.websiteDataStore = .nonPersistent()
         }
+        let userScript = WKUserScript(
+            source: Self.helperUserScriptSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        )
+        config.userContentController.addUserScript(userScript)
+
         self.webView = WKWebView(frame: .zero, configuration: config)
         self.workspaceId = workspaceId
         self.isPrivate = isPrivate
         self.urlString = initialURL.absoluteString
         self.title = initialURL.absoluteString == FluoUserDataSnapshot.startPageURL ? "Fluo" : (initialURL.host ?? "Fluo")
+        self.isSleeping = deferLoad && initialURL.absoluteString != FluoUserDataSnapshot.startPageURL
         super.init()
 
+        let proxy = FluoScriptMessageProxy(tab: self)
+        webView.configuration.userContentController.add(proxy, name: "fluoAction")
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -76,7 +214,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
             Task { @MainActor in
                 guard let self else { return }
                 self.isLoading = wv.isLoading
-                if !self.isStartPage {
+                if !self.isStartPage && !self.isSleeping {
                     self.canGoBack = wv.canGoBack
                     self.canGoForward = wv.canGoForward
                 }
@@ -87,13 +225,13 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         }
         obsTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in
-                guard let self, !self.isStartPage else { return }
+                guard let self, !self.isStartPage, !self.isSleeping else { return }
                 if let t = wv.title, !t.isEmpty { self.title = t }
             }
         }
         obsUrl = webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in
-                guard let self, !self.isStartPage else { return }
+                guard let self, !self.isStartPage, !self.isSleeping else { return }
                 if let u = wv.url?.absoluteString, !u.isEmpty, u != "about:blank" {
                     self.urlString = u
                 }
@@ -101,27 +239,79 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                 self.canGoForward = wv.canGoForward
             }
         }
-        if initialURL.absoluteString != FluoUserDataSnapshot.startPageURL {
+        if !deferLoad && initialURL.absoluteString != FluoUserDataSnapshot.startPageURL {
             webView.load(URLRequest(url: initialURL))
+        }
+    }
+
+    func wakeIfNeeded() {
+        lastActiveAt = Date()
+        guard isSleeping else { return }
+        isSleeping = false
+        pageErrorText = nil
+        if !isStartPage, let url = URL(string: urlString) {
+            webView.load(URLRequest(url: url))
+        }
+    }
+
+    func putToSleep() {
+        guard !isStartPage, !isSleeping else { return }
+        isSleeping = true
+        displayMode = .original
+        webView.stopLoading()
+        webView.loadHTMLString("", baseURL: nil)
+    }
+
+    static func resolveInputToURL(_ rawInput: String, searchEngine: SearchEngine) -> URL? {
+        let trimmed = rawInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        // Keyword search shortcuts (@namu, @naver, @yt, @w, @g, @ddg, @bing)
+        let parts = trimmed.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        if parts.count == 2, parts[0].hasPrefix("@") {
+            let prefix = parts[0].lowercased()
+            let query = String(parts[1])
+            let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+            switch prefix {
+            case "@n", "@naver":
+                return URL(string: "https://search.naver.com/search.naver?query=\(enc)")
+            case "@namu":
+                return URL(string: "https://namu.wiki/Go?q=\(enc)")
+            case "@yt", "@youtube":
+                return URL(string: "https://www.youtube.com/results?search_query=\(enc)")
+            case "@w", "@wiki":
+                return URL(string: "https://en.wikipedia.org/w/index.php?search=\(enc)")
+            case "@g", "@google":
+                return URL(string: "https://www.google.com/search?q=\(enc)")
+            case "@ddg":
+                return URL(string: "https://duckduckgo.com/?q=\(enc)")
+            case "@b", "@bing":
+                return URL(string: "https://www.bing.com/search?q=\(enc)")
+            default:
+                break
+            }
+        }
+
+        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+            return URL(string: trimmed)
+        } else if trimmed.contains(".") && !trimmed.contains(" ") {
+            return URL(string: "https://\(trimmed)")
+        } else {
+            return searchEngine.searchURL(query: trimmed)
         }
     }
 
     func navigate(input: String, searchEngine: SearchEngine) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        isSleeping = false
+        pageErrorText = nil
+        lastActiveAt = Date()
         if trimmed == FluoUserDataSnapshot.startPageURL || trimmed == "tb://start" {
             openStartPage()
             return
         }
-        let url: URL?
-        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
-            url = URL(string: trimmed)
-        } else if trimmed.contains(".") && !trimmed.contains(" ") {
-            url = URL(string: "https://\(trimmed)")
-        } else {
-            url = searchEngine.searchURL(query: trimmed)
-        }
-        if let target = url {
+        if let target = Self.resolveInputToURL(trimmed, searchEngine: searchEngine) {
             displayMode = .original
             urlString = target.absoluteString
             canGoBack = webView.canGoBack || webView.url != nil
@@ -131,6 +321,8 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
 
     func openStartPage() {
         webView.stopLoading()
+        isSleeping = false
+        pageErrorText = nil
         displayMode = .original
         urlString = FluoUserDataSnapshot.startPageURL
         title = "Fluo"
@@ -141,6 +333,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     }
 
     func goForwardFromCurrent() {
+        pageErrorText = nil
         if isStartPage, let wvUrl = webView.url {
             urlString = wvUrl.absoluteString
             title = webView.title ?? (wvUrl.host ?? "Fluo")
@@ -166,6 +359,10 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                     }
                 } else {
                     webView.load(navigationAction.request)
+                }
+            } else {
+                Task { @MainActor in
+                    UIApplication.shared.open(url)
                 }
             }
         }
@@ -195,6 +392,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
 
     @objc private func handlePullToRefresh(_ sender: UIRefreshControl) {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        pageErrorText = nil
         webView.reload()
     }
 
@@ -231,23 +429,80 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     }
 
     nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+        if let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(),
+           !["http", "https", "about", "data", "blob", "file", "fluo"].contains(scheme) {
+            await MainActor.run {
+                UIApplication.shared.open(url)
+            }
+            return .cancel
+        }
         let host = navigationAction.request.url?.host
         await MainActor.run {
+            self.pageErrorText = nil
             self.onNavigationSyncAdBlock?(webView, host)
+        }
+        return .allow
+    }
+
+    nonisolated func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
+        let isAttachment: Bool = {
+            if let http = navigationResponse.response as? HTTPURLResponse,
+               let disp = http.value(forHTTPHeaderField: "Content-Disposition")?.lowercased(),
+               disp.contains("attachment") {
+                return true
+            }
+            return !navigationResponse.canShowMIMEType
+        }()
+        if isAttachment, let url = navigationResponse.response.url {
+            let suggested = navigationResponse.response.suggestedFilename
+            await MainActor.run {
+                self.onDownloadRequested?(url, suggested)
+            }
+            return .cancel
         }
         return .allow
     }
 
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
+            self.pageErrorText = nil
             let url = webView.url?.absoluteString ?? ""
             let pageTitle = webView.title ?? url
-            if !self.isPrivate && !url.isEmpty {
+            if !self.isPrivate && !url.isEmpty && url != "about:blank" {
                 self.onVisitRecorded?(url, pageTitle)
             }
             if abs(self.pageZoom - 1.0) > 0.01 {
                 self.applyPageZoom(self.pageZoom)
             }
+            self.onPageFinishedLoad?(self)
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        let nsErr = error as NSError
+        if nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled { return }
+        Task { @MainActor in
+            self.isLoading = false
+            self.pageErrorText = error.localizedDescription
+        }
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let nsErr = error as NSError
+        if nsErr.domain == NSURLErrorDomain && nsErr.code == NSURLErrorCancelled { return }
+        Task { @MainActor in
+            self.isLoading = false
+            self.pageErrorText = error.localizedDescription
+        }
+    }
+}
+
+private final class FluoSpeechDelegate: NSObject, AVSpeechSynthesizerDelegate {
+    var onUtteranceFinished: (() -> Void)?
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            self.onUtteranceFinished?()
         }
     }
 }
@@ -282,9 +537,27 @@ final class BrowserStore: ObservableObject {
     @Published var findCurrent = 0
     @Published var findTotal = 0
 
+    @Published var liveWebSelection: String = ""
     @Published var selectionSourceText = ""
     @Published var selectionTranslatedText = ""
     @Published var showSelectionResultSheet = false
+
+    @Published var showAutoTranslatePrompt = false
+    @Published var detectedForeignLanguageCode = ""
+
+    // Edge-style Read Aloud (TTS) state
+    @Published var isSpeakingTTS = false
+    @Published var isPausedTTS = false
+    @Published var ttsRate: Float = 1.0
+    @Published var ttsIndex: Int = 0
+    @Published var ttsTotal: Int = 0
+    private var ttsSegments: [String] = []
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    private let speechDelegate = FluoSpeechDelegate()
+
+    // File download & share feedback
+    @Published var latestDownloadedFileURL: URL? = nil
+    @Published var isDownloadingFile: Bool = false
 
     private var translationTask: Task<Void, Never>?
     private var regionPollTask: Task<Void, Never>?
@@ -305,11 +578,56 @@ final class BrowserStore: ObservableObject {
         self.openAiBaseUrl = UserDefaults.standard.string(forKey: "fluo.openAiBaseUrl") ?? "https://api.openai.com/v1"
         self.openAiModel = UserDefaults.standard.string(forKey: "fluo.openAiModel") ?? "gpt-4.1-mini"
 
-        let initialUrl = URL(string: FluoUserDataSnapshot.startPageURL)!
-        let first = BrowserTab(initialURL: initialUrl, workspaceId: loaded.activeWorkspaceId, isPrivate: false)
-        self.tabs = [first]
-        self.activeTabId = first.id
-        wireTabCallbacks(first)
+        let fallbackId = UUID()
+        self.activeTabId = fallbackId
+
+        // Restore saved tab session if available
+        if !loaded.savedTabs.isEmpty {
+            let targetActiveStr = loaded.activeSavedTabId
+            var restoredTabs: [BrowserTab] = []
+            for saved in loaded.savedTabs.prefix(24) {
+                let tabUUID = UUID(uuidString: saved.id) ?? UUID()
+                let url = URL(string: saved.urlString) ?? URL(string: FluoUserDataSnapshot.startPageURL)!
+                let isTargetActive = (saved.id == targetActiveStr)
+                let wsValid = loaded.workspaces.contains(where: { $0.id == saved.workspaceId })
+                let tab = BrowserTab(
+                    id: tabUUID,
+                    initialURL: url,
+                    workspaceId: wsValid ? saved.workspaceId : loaded.activeWorkspaceId,
+                    isPrivate: false,
+                    deferLoad: !isTargetActive
+                )
+                tab.isPinned = saved.isPinned
+                if !saved.title.isEmpty {
+                    tab.title = saved.title
+                }
+                restoredTabs.append(tab)
+            }
+            if !restoredTabs.isEmpty {
+                self.tabs = restoredTabs
+                let chosen = restoredTabs.first(where: { $0.id.uuidString == targetActiveStr })
+                    ?? restoredTabs.first(where: { $0.workspaceId == loaded.activeWorkspaceId })
+                    ?? restoredTabs[0]
+                chosen.wakeIfNeeded()
+                self.activeTabId = chosen.id
+                for t in restoredTabs {
+                    wireTabCallbacks(t)
+                }
+            }
+        }
+
+        if self.tabs.isEmpty {
+            let initialUrl = URL(string: FluoUserDataSnapshot.startPageURL)!
+            let first = BrowserTab(initialURL: initialUrl, workspaceId: loaded.activeWorkspaceId, isPrivate: false)
+            self.tabs = [first]
+            self.activeTabId = first.id
+            wireTabCallbacks(first)
+        }
+
+        speechSynthesizer.delegate = speechDelegate
+        speechDelegate.onUtteranceFinished = { [weak self] in
+            self?.advanceTTS()
+        }
     }
 
     private func wireTabCallbacks(_ tab: BrowserTab) {
@@ -322,6 +640,7 @@ final class BrowserStore: ObservableObject {
         }
         tab.onVisitRecorded = { [weak self] url, title in
             self?.recordHistory(url: url, title: title)
+            self?.persistUserData()
         }
         tab.onNavigationSyncAdBlock = { [weak self] webView, host in
             guard let self else { return }
@@ -348,12 +667,141 @@ final class BrowserStore: ObservableObject {
                 self.quickToggleTranslation()
             }
         }
+        tab.onScriptAction = { [weak self, weak tab] payload in
+            guard let self, let tab, self.activeTabId == tab.id else { return }
+            self.handleScriptAction(payload, for: tab)
+        }
+        tab.onDownloadRequested = { [weak self] url, suggestedName in
+            self?.startFileDownload(from: url, suggestedFilename: suggestedName)
+        }
+        tab.onPageFinishedLoad = { [weak self] loadedTab in
+            guard let self else { return }
+            self.persistUserData()
+            if loadedTab.id == self.activeTabId {
+                self.liveWebSelection = ""
+            }
+        }
         AdBlockManager.shared.apply(
             to: tab.webView,
             enabled: userData.adBlockEnabled,
             host: URL(string: tab.urlString)?.host,
             allowlist: userData.adBlockAllowlist
         )
+    }
+
+    private func handleScriptAction(_ payload: [String: Any], for tab: BrowserTab) {
+        guard let type = payload["type"] as? String else { return }
+        switch type {
+        case "selection-changed":
+            let text = (payload["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            liveWebSelection = text
+        case "region-picked":
+            if isPickingRegion {
+                regionPollTask?.cancel()
+                isPickingRegion = false
+                translateActiveTab(bilingual: false)
+            }
+        case "retranslate":
+            guard let key = payload["key"] as? String else { return }
+            let source = (payload["source"] as? String) ?? ""
+            retranslateSingleParagraph(key: key, source: source, on: tab)
+        case "edit":
+            guard let translation = payload["translation"] as? String else { return }
+            if let source = payload["source"] as? String, !source.isEmpty {
+                TranslationEngine.shared.storeCachedTranslation(
+                    translation,
+                    for: source,
+                    targetLanguage: targetLanguage,
+                    style: userData.style.rawValue
+                )
+            }
+        case "report-translation":
+            let source = (payload["source"] as? String) ?? ""
+            let tr = (payload["translation"] as? String) ?? ""
+            UIPasteboard.general.string = "[Fluo Translation Report]\nURL: \(tab.urlString)\nSource: \(source)\nTranslation: \(tr)"
+            translationStatusText = "Copied report to clipboard"
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_800_000_000)
+                if self.translationStatusText == "Copied report to clipboard" {
+                    self.translationStatusText = ""
+                }
+            }
+        case "page-language-detected":
+            let lang = (payload["lang"] as? String) ?? "unknown"
+            tab.detectedLanguage = lang
+            evaluateAutoTranslatePolicy(for: tab, detectedLang: lang)
+        case "dynamic-blocks-added":
+            if tab.displayMode != .original && !isTranslating {
+                translateActiveTab(bilingual: tab.displayMode == .bilingual)
+            }
+        default:
+            break
+        }
+    }
+
+    private func evaluateAutoTranslatePolicy(for tab: BrowserTab, detectedLang: String) {
+        guard !tab.isStartPage, tab.displayMode == .original, !isTranslating else { return }
+        guard detectedLang != "unknown" else { return }
+        let targetCode: String = {
+            let low = targetLanguage.lowercased()
+            if low.contains("한국") || low.contains("korean") || low == "ko" { return "ko" }
+            if low.contains("日本") || low.contains("japanese") || low == "ja" { return "ja" }
+            if low.contains("中文") || low.contains("chinese") || low.hasPrefix("zh") { return "zh" }
+            return "en"
+        }()
+        if detectedLang == targetCode {
+            showAutoTranslatePrompt = false
+            return
+        }
+        let host = URL(string: tab.urlString)?.host?.lowercased() ?? ""
+        if !host.isEmpty && userData.neverTranslateHosts.contains(where: { $0.lowercased() == host }) {
+            showAutoTranslatePrompt = false
+            return
+        }
+        if !host.isEmpty && userData.autoTranslateHosts.contains(where: { $0.lowercased() == host }) {
+            showAutoTranslatePrompt = false
+            translateActiveTab(bilingual: false)
+            return
+        }
+        if userData.autoTranslateEnabled {
+            detectedForeignLanguageCode = detectedLang.uppercased()
+            showAutoTranslatePrompt = true
+        }
+    }
+
+    func toggleAlwaysTranslateCurrentHost() {
+        let host = currentHost
+        guard !host.isEmpty else { return }
+        userData.neverTranslateHosts.removeAll { $0.lowercased() == host }
+        if let idx = userData.autoTranslateHosts.firstIndex(where: { $0.lowercased() == host }) {
+            userData.autoTranslateHosts.remove(at: idx)
+        } else {
+            userData.autoTranslateHosts.append(host)
+            showAutoTranslatePrompt = false
+            if activeTab.displayMode == .original {
+                translateActiveTab(bilingual: false)
+            }
+        }
+        userData.save()
+    }
+
+    func toggleNeverTranslateCurrentHost() {
+        let host = currentHost
+        guard !host.isEmpty else { return }
+        userData.autoTranslateHosts.removeAll { $0.lowercased() == host }
+        if let idx = userData.neverTranslateHosts.firstIndex(where: { $0.lowercased() == host }) {
+            userData.neverTranslateHosts.remove(at: idx)
+        } else {
+            userData.neverTranslateHosts.append(host)
+            showAutoTranslatePrompt = false
+        }
+        userData.save()
+    }
+
+    var isCurrentHostAlwaysTranslated: Bool {
+        let host = currentHost
+        guard !host.isEmpty else { return false }
+        return userData.autoTranslateHosts.contains { $0.lowercased() == host }
     }
 
     var activeTab: BrowserTab {
@@ -381,6 +829,20 @@ final class BrowserStore: ObservableObject {
         return userData.bookmarks.contains { $0.url == url }
     }
 
+    func persistUserData() {
+        userData.savedTabs = tabs.filter { !$0.isPrivate }.map { t in
+            SavedTabItem(
+                id: t.id.uuidString,
+                urlString: t.urlString,
+                title: t.title,
+                workspaceId: t.workspaceId,
+                isPinned: t.isPinned
+            )
+        }
+        userData.activeSavedTabId = activeTabId.uuidString
+        userData.save()
+    }
+
     func savePreferences() {
         UserDefaults.standard.set(uiLang.rawValue, forKey: "fluo.uiLang")
         UserDefaults.standard.set(targetLanguage, forKey: "fluo.targetLang")
@@ -390,18 +852,165 @@ final class BrowserStore: ObservableObject {
         UserDefaults.standard.set(geminiModel, forKey: "fluo.geminiModel")
         UserDefaults.standard.set(openAiBaseUrl, forKey: "fluo.openAiBaseUrl")
         UserDefaults.standard.set(openAiModel, forKey: "fluo.openAiModel")
-        userData.save()
+        persistUserData()
+        applyLiveTypography()
+    }
+
+    func applyLiveTypography() {
+        let s = String(format: "%.2f", userData.fontScale)
+        let l = String(format: "%.2f", userData.lineHeight)
+        _ = activeTab.webView.evaluateJavaScript("window.__tbUpdateInlineStyle && window.__tbUpdateInlineStyle(\(s), \(l));", completionHandler: nil)
+    }
+
+    // MARK: - Omnibox Suggestions & Calculator
+
+    static func evaluateMathExpression(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expr = trimmed.hasPrefix("=") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed
+        guard expr.count >= 3, expr.count <= 48 else { return nil }
+        let allowed = CharacterSet(charactersIn: "0123456789.+-*/()% ")
+        guard expr.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
+        guard expr.contains(where: { "+-*/".contains($0) }),
+              expr.contains(where: { $0.isNumber }) else { return nil }
+        let sanitized = expr.replacingOccurrences(of: " ", with: "")
+        // Guard against consecutive operators that crash NSExpression
+        if sanitized.range(of: "[+\\-*/%.]{2,}", options: .regularExpression) != nil {
+            return nil
+        }
+        guard let first = sanitized.first, (first.isNumber || first == "(" || first == "-"),
+              let last = sanitized.last, (last.isNumber || last == ")") else { return nil }
+        let nsExpr = NSExpression(format: sanitized)
+        if let num = nsExpr.expressionValue(with: nil, context: nil) as? NSNumber {
+            let val = num.doubleValue
+            guard val.isFinite else { return nil }
+            if abs(val.rounded() - val) < 1e-9 {
+                return String(format: "%.0f", val)
+            }
+            return String(format: "%.4f", val).replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+        }
+        return nil
+    }
+
+    func omniboxSuggestions(for query: String) -> [OmniboxSuggestion] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, q != FluoUserDataSnapshot.startPageURL else { return [] }
+        var items: [OmniboxSuggestion] = []
+
+        if let mathRes = Self.evaluateMathExpression(q) {
+            items.append(
+                OmniboxSuggestion(
+                    id: "calc-\(q)",
+                    kind: .calculation,
+                    title: "= \(mathRes)",
+                    subtitle: q,
+                    targetURLOrQuery: mathRes,
+                    tabId: nil
+                )
+            )
+        }
+
+        // Open tabs match
+        for tab in tabs where tab.id != activeTabId && !tab.isStartPage {
+            if tab.title.localizedCaseInsensitiveContains(q) || tab.urlString.localizedCaseInsensitiveContains(q) {
+                items.append(
+                    OmniboxSuggestion(
+                        id: "tab-\(tab.id.uuidString)",
+                        kind: .switchTab,
+                        title: tab.title.isEmpty ? tab.urlString : tab.title,
+                        subtitle: tab.urlString,
+                        targetURLOrQuery: tab.urlString,
+                        tabId: tab.id
+                    )
+                )
+            }
+            if items.count >= 3 { break }
+        }
+
+        // Bookmarks match
+        for bm in userData.bookmarks {
+            if bm.title.localizedCaseInsensitiveContains(q) || bm.url.localizedCaseInsensitiveContains(q) {
+                items.append(
+                    OmniboxSuggestion(
+                        id: "bm-\(bm.id)",
+                        kind: .bookmark,
+                        title: bm.title,
+                        subtitle: bm.url,
+                        targetURLOrQuery: bm.url,
+                        tabId: nil
+                    )
+                )
+            }
+            if items.count >= 6 { break }
+        }
+
+        // History match
+        var seenURLs = Set(items.map(\.targetURLOrQuery))
+        for h in userData.history {
+            if seenURLs.contains(h.url) { continue }
+            if h.title.localizedCaseInsensitiveContains(q) || h.url.localizedCaseInsensitiveContains(q) {
+                seenURLs.insert(h.url)
+                items.append(
+                    OmniboxSuggestion(
+                        id: "hist-\(h.id)",
+                        kind: .history,
+                        title: h.title.isEmpty ? h.url : h.title,
+                        subtitle: h.url,
+                        targetURLOrQuery: h.url,
+                        tabId: nil
+                    )
+                )
+            }
+            if items.count >= 8 { break }
+        }
+
+        return items
     }
 
     // MARK: - Tabs & Workspaces
 
+    func selectTab(_ id: UUID) {
+        guard let target = tabs.first(where: { $0.id == id }) else { return }
+        stopTTS()
+        showAutoTranslatePrompt = false
+        liveWebSelection = ""
+        target.wakeIfNeeded()
+        activeTabId = target.id
+        persistUserData()
+    }
+
     func newTab(urlString: String? = nil, isPrivate: Bool = false) {
+        stopTTS()
+        showAutoTranslatePrompt = false
+        liveWebSelection = ""
         let targetStr = urlString ?? FluoUserDataSnapshot.startPageURL
         let url = URL(string: targetStr) ?? URL(string: FluoUserDataSnapshot.startPageURL)!
         let tab = BrowserTab(initialURL: url, workspaceId: userData.activeWorkspaceId, isPrivate: isPrivate)
         wireTabCallbacks(tab)
         tabs.append(tab)
         activeTabId = tab.id
+        persistUserData()
+    }
+
+    func duplicateTab(_ id: UUID) {
+        guard let source = tabs.first(where: { $0.id == id }) else { return }
+        newTab(urlString: source.urlString, isPrivate: source.isPrivate)
+    }
+
+    func moveTabsInCurrentWorkspace(fromOffsets: IndexSet, toOffset: Int) {
+        var wsTabs = activeWorkspaceTabs
+        wsTabs.move(fromOffsets: fromOffsets, toOffset: toOffset)
+        let otherTabs = tabs.filter { $0.workspaceId != userData.activeWorkspaceId }
+        tabs = wsTabs + otherTabs
+        persistUserData()
+    }
+
+    func sleepInactiveTabs(keepCount: Int = 3) {
+        let nonActive = tabs
+            .filter { $0.id != activeTabId && !$0.isPinned && !$0.isStartPage && !$0.isSleeping }
+            .sorted { $0.lastActiveAt > $1.lastActiveAt }
+        for tab in nonActive.dropFirst(max(0, keepCount - 1)) {
+            tab.putToSleep()
+        }
     }
 
     func closeTab(_ id: UUID) {
@@ -414,13 +1023,17 @@ final class BrowserStore: ObservableObject {
         }
         if tabs.count == 1 {
             removed.openStartPage()
+            persistUserData()
             return
         }
         tabCancellables.removeValue(forKey: id)
         tabs.remove(at: idx)
         if !tabs.contains(where: { $0.id == activeTabId }) {
-            activeTabId = activeWorkspaceTabs.first?.id ?? tabs[0].id
+            let next = activeWorkspaceTabs.first ?? tabs[0]
+            next.wakeIfNeeded()
+            activeTabId = next.id
         }
+        persistUserData()
     }
 
     func reopenClosedTab() {
@@ -440,14 +1053,18 @@ final class BrowserStore: ObservableObject {
         if activeWorkspaceTabs.isEmpty {
             newTab()
         } else if !tabs.contains(where: { $0.id == activeTabId }) {
-            activeTabId = activeWorkspaceTabs[0].id
+            let next = activeWorkspaceTabs[0]
+            next.wakeIfNeeded()
+            activeTabId = next.id
         }
+        persistUserData()
     }
 
     func togglePinTab(_ id: UUID) {
         if let tab = tabs.first(where: { $0.id == id }) {
             tab.isPinned.toggle()
             objectWillChange.send()
+            persistUserData()
         }
     }
 
@@ -458,7 +1075,7 @@ final class BrowserStore: ObservableObject {
         userData.workspaces.append(ws)
         userData.activeWorkspaceId = ws.id
         newTab()
-        userData.save()
+        persistUserData()
     }
 
     func renameWorkspace(_ id: String, name: String) {
@@ -467,18 +1084,18 @@ final class BrowserStore: ObservableObject {
               let idx = userData.workspaces.firstIndex(where: { $0.id == id }) else { return }
         userData.workspaces[idx].name = clean
         objectWillChange.send()
-        userData.save()
+        persistUserData()
     }
 
     func switchWorkspace(_ id: String) {
         guard userData.workspaces.contains(where: { $0.id == id }) else { return }
         userData.activeWorkspaceId = id
         if let existing = tabs.first(where: { $0.workspaceId == id }) {
-            activeTabId = existing.id
+            selectTab(existing.id)
         } else {
             newTab()
         }
-        userData.save()
+        persistUserData()
     }
 
     func deleteWorkspace(_ id: String) {
@@ -490,13 +1107,14 @@ final class BrowserStore: ObservableObject {
         if userData.activeWorkspaceId == id {
             userData.activeWorkspaceId = userData.workspaces[0].id
         }
-        userData.save()
+        persistUserData()
     }
 
     func moveTab(_ tabId: UUID, toWorkspace wsId: String) {
         if let tab = tabs.first(where: { $0.id == tabId }) {
             tab.workspaceId = wsId
             objectWillChange.send()
+            persistUserData()
         }
     }
 
@@ -514,7 +1132,7 @@ final class BrowserStore: ObservableObject {
             return false
         }
         guard nextIndex >= 0 else { return false }
-        activeTabId = list[nextIndex].id
+        selectTab(list[nextIndex].id)
         isDockCollapsed = false
         return true
     }
@@ -527,6 +1145,33 @@ final class BrowserStore: ObservableObject {
         } else {
             restoreOriginal()
         }
+    }
+
+    // MARK: - Custom Start Page Shortcuts
+
+    func addCustomShortcut(title: String, urlString: String) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var cleanUrl = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUrl.isEmpty else { return }
+        if !cleanUrl.hasPrefix("http://") && !cleanUrl.hasPrefix("https://") {
+            cleanUrl = "https://\(cleanUrl)"
+        }
+        let finalTitle = cleanTitle.isEmpty ? (URL(string: cleanUrl)?.host ?? cleanUrl) : cleanTitle
+        userData.customShortcuts.append(
+            QuickShortcutItem(
+                id: UUID().uuidString,
+                title: finalTitle,
+                urlString: cleanUrl,
+                icon: "globe",
+                tintHex: "#684CFF"
+            )
+        )
+        userData.save()
+    }
+
+    func removeCustomShortcut(_ id: String) {
+        userData.customShortcuts.removeAll { $0.id == id }
+        userData.save()
     }
 
     // MARK: - Bookmarks, History, Glossary
@@ -616,7 +1261,17 @@ final class BrowserStore: ObservableObject {
         userData.save()
     }
 
-    func addGlossaryItem(source: String, target: String, caseSensitive: Bool, folder: String = "Default") {
+    func upsertGlossaryItem(
+        id: String? = nil,
+        source: String,
+        target: String,
+        caseSensitive: Bool,
+        folder: String = "Default",
+        exactMatch: Bool = false,
+        useRegex: Bool = false,
+        doNotTranslate: Bool = false,
+        note: String = ""
+    ) {
         let cleanSrc = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanSrc.isEmpty else { return }
         let cleanFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -624,21 +1279,95 @@ final class BrowserStore: ObservableObject {
         if !userData.glossaryFolders.contains(finalFolder) {
             userData.glossaryFolders.append(finalFolder)
         }
-        userData.glossary.removeAll {
-            $0.folder == finalFolder && $0.source.caseInsensitiveCompare(cleanSrc) == .orderedSame
+        let cleanTarget = target.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let id, let idx = userData.glossary.firstIndex(where: { $0.id == id }) {
+            userData.glossary[idx].source = cleanSrc
+            userData.glossary[idx].target = cleanTarget
+            userData.glossary[idx].caseSensitive = caseSensitive
+            userData.glossary[idx].folder = finalFolder
+            userData.glossary[idx].exactMatch = exactMatch
+            userData.glossary[idx].useRegex = useRegex
+            userData.glossary[idx].doNotTranslate = doNotTranslate
+            userData.glossary[idx].note = note
+        } else {
+            userData.glossary.removeAll {
+                $0.folder == finalFolder && $0.source.caseInsensitiveCompare(cleanSrc) == .orderedSame
+            }
+            userData.glossary.insert(
+                GlossaryItem(
+                    id: UUID().uuidString,
+                    source: cleanSrc,
+                    target: cleanTarget,
+                    caseSensitive: caseSensitive,
+                    folder: finalFolder,
+                    enabled: true,
+                    exactMatch: exactMatch,
+                    useRegex: useRegex,
+                    doNotTranslate: doNotTranslate,
+                    note: note
+                ),
+                at: 0
+            )
         }
-        userData.glossary.insert(
-            GlossaryItem(
-                id: UUID().uuidString,
-                source: cleanSrc,
-                target: target.trimmingCharacters(in: .whitespacesAndNewlines),
-                caseSensitive: caseSensitive,
-                folder: finalFolder,
-                enabled: true
-            ),
-            at: 0
-        )
         userData.save()
+    }
+
+    func addGlossaryItem(source: String, target: String, caseSensitive: Bool, folder: String = "Default") {
+        upsertGlossaryItem(id: nil, source: source, target: target, caseSensitive: caseSensitive, folder: folder)
+    }
+
+    func exportGlossaryCSV() -> String {
+        var lines = ["source,target,folder,case_sensitive,exact_match,use_regex,do_not_translate,note"]
+        for item in userData.glossary {
+            let cols = [
+                item.source,
+                item.target,
+                item.folder,
+                item.caseSensitive ? "1" : "0",
+                item.exactMatch ? "1" : "0",
+                item.useRegex ? "1" : "0",
+                item.doNotTranslate ? "1" : "0",
+                item.note,
+            ].map { col -> String in
+                let escaped = col.replacingOccurrences(of: "\"", with: "\"\"")
+                return "\"\(escaped)\""
+            }
+            lines.append(cols.joined(separator: ","))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @discardableResult
+    func importGlossaryCSV(_ csv: String, defaultFolder: String = "Default") -> Int {
+        let rows = csv.components(separatedBy: .newlines)
+        var imported = 0
+        for (idx, rawLine) in rows.enumerated() {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty { continue }
+            let cols = line.split(separator: ",", omittingEmptySubsequences: false).map {
+                $0.trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+            }
+            if idx == 0 && cols.first?.lowercased() == "source" { continue }
+            guard cols.count >= 2, !cols[0].isEmpty else { continue }
+            let folder = (cols.count >= 3 && !cols[2].isEmpty) ? cols[2] : defaultFolder
+            let cs = cols.count >= 4 && (cols[3] == "1" || cols[3].lowercased() == "true")
+            let em = cols.count >= 5 && (cols[4] == "1" || cols[4].lowercased() == "true")
+            let rx = cols.count >= 6 && (cols[5] == "1" || cols[5].lowercased() == "true")
+            let dnt = cols.count >= 7 && (cols[6] == "1" || cols[6].lowercased() == "true")
+            let note = cols.count >= 8 ? cols[7] : ""
+            upsertGlossaryItem(
+                source: cols[0],
+                target: cols[1],
+                caseSensitive: cs,
+                folder: folder,
+                exactMatch: em,
+                useRegex: rx,
+                doNotTranslate: dnt,
+                note: note
+            )
+            imported += 1
+        }
+        return imported
     }
 
     func toggleGlossaryEnabled(_ id: String) {
@@ -703,10 +1432,191 @@ final class BrowserStore: ObservableObject {
         activeTab.webView.reload()
     }
 
+    func clearCurrentHostSiteData() async {
+        let host = currentHost
+        guard !host.isEmpty else { return }
+        let store = WKWebsiteDataStore.default()
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        let records = await store.dataRecords(ofTypes: types)
+        let matched = records.filter { rec in
+            let d = rec.displayName.lowercased()
+            return host == d || host.hasSuffix(".\(d)") || d.hasSuffix(host)
+        }
+        if !matched.isEmpty {
+            await store.removeData(ofTypes: types, for: matched)
+        }
+        activeTab.webView.reload()
+    }
+
     func clearSiteData() async {
         let store = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         await store.removeData(ofTypes: types, modifiedSince: .distantPast)
+        TranslationEngine.shared.clearTranslationCache()
+    }
+
+    // MARK: - File Downloads & Markdown Export
+
+    func startFileDownload(from url: URL, suggestedFilename: String?) {
+        isDownloadingFile = true
+        Task {
+            defer {
+                Task { @MainActor in self.isDownloadingFile = false }
+            }
+            do {
+                let (tempURL, response) = try await URLSession.shared.download(from: url)
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                let dir = docs.appendingPathComponent("Downloads", isDirectory: true)
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                let rawName = suggestedFilename ?? response.suggestedFilename ?? (url.lastPathComponent.isEmpty ? "download.bin" : url.lastPathComponent)
+                let dest = dir.appendingPathComponent("\(Int(Date().timeIntervalSince1970))_\(rawName)")
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.moveItem(at: tempURL, to: dest)
+                let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? Int64) ?? 0
+                await MainActor.run {
+                    let record = DownloadItemRecord(
+                        id: UUID().uuidString,
+                        fileName: rawName,
+                        sourceURL: url.absoluteString,
+                        localPath: dest.path,
+                        byteSize: size,
+                        createdAt: Date()
+                    )
+                    self.userData.downloads.insert(record, at: 0)
+                    self.userData.save()
+                    self.latestDownloadedFileURL = dest
+                }
+            } catch {
+                await MainActor.run {
+                    self.translationError = "Download failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func exportCurrentPageMarkdown() async -> String {
+        let tab = activeTab
+        if tab.isStartPage { return "# Fluo Start Page" }
+        let js = """
+        (() => {
+          const nodes = [...document.querySelectorAll("[data-rb-inline-translation-for], [data-rb-inline-key]:not([hidden])")];
+          if (nodes.length > 0) {
+            return nodes.map(n => (n.innerText || n.textContent || "").trim()).filter(Boolean).join("\\n\\n");
+          }
+          return (document.body && document.body.innerText) ? document.body.innerText.trim() : "";
+        })()
+        """
+        let body = (try? await tab.webView.evaluateJavaScript(js) as? String) ?? ""
+        return "# \(tab.title)\n\nSource: \(tab.urlString)\n\n---\n\n\(body)"
+    }
+
+    // MARK: - Edge-Style Read Aloud (TTS)
+
+    func startOrToggleTTS() {
+        if isSpeakingTTS {
+            if isPausedTTS {
+                speechSynthesizer.continueSpeaking()
+                isPausedTTS = false
+            } else {
+                speechSynthesizer.pauseSpeaking(at: .word)
+                isPausedTTS = true
+            }
+            return
+        }
+        let js = """
+        (() => {
+          const tr = [...document.querySelectorAll("[data-rb-inline-translation-for]")].filter(e => (e.innerText || "").trim().length > 1);
+          const list = tr.length > 0 ? tr : [...document.querySelectorAll("article p, main p, p, h1, h2, h3, li")].filter(e => (e.innerText || "").trim().length >= 12 && e.offsetParent !== null);
+          window.__fluoTtsNodes = list;
+          return list.map(e => (e.innerText || e.textContent || "").trim());
+        })()
+        """
+        activeTab.webView.evaluateJavaScript(js) { [weak self] res, _ in
+            guard let self, let arr = res as? [String], !arr.isEmpty else { return }
+            Task { @MainActor in
+                self.ttsSegments = arr
+                self.ttsTotal = arr.count
+                self.ttsIndex = 0
+                self.isSpeakingTTS = true
+                self.isPausedTTS = false
+                self.speakCurrentTTSSegment()
+            }
+        }
+    }
+
+    func stepTTS(delta: Int) {
+        guard isSpeakingTTS, !ttsSegments.isEmpty else { return }
+        speechSynthesizer.stopSpeaking(at: .immediate)
+        ttsIndex = max(0, min(ttsSegments.count - 1, ttsIndex + delta))
+        isPausedTTS = false
+        speakCurrentTTSSegment()
+    }
+
+    func setTTSRate(_ rate: Float) {
+        ttsRate = max(0.6, min(2.0, rate))
+        if isSpeakingTTS && !isPausedTTS {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+            speakCurrentTTSSegment()
+        }
+    }
+
+    func stopTTS() {
+        if speechSynthesizer.isSpeaking || speechSynthesizer.isPaused {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        isSpeakingTTS = false
+        isPausedTTS = false
+        ttsIndex = 0
+        ttsTotal = 0
+        ttsSegments = []
+        _ = activeTab.webView.evaluateJavaScript(
+            "document.querySelectorAll('[data-rb-tts-active]').forEach(e => e.removeAttribute('data-rb-tts-active'));",
+            completionHandler: nil
+        )
+    }
+
+    private func advanceTTS() {
+        guard isSpeakingTTS, !isPausedTTS else { return }
+        if ttsIndex + 1 < ttsSegments.count {
+            ttsIndex += 1
+            speakCurrentTTSSegment()
+        } else {
+            stopTTS()
+        }
+    }
+
+    private func speakCurrentTTSSegment() {
+        guard isSpeakingTTS, ttsIndex >= 0, ttsIndex < ttsSegments.count else {
+            stopTTS()
+            return
+        }
+        let text = ttsSegments[ttsIndex]
+        let highlightJs = """
+        (() => {
+          document.querySelectorAll('[data-rb-tts-active]').forEach(e => e.removeAttribute('data-rb-tts-active'));
+          const nodes = window.__fluoTtsNodes || [];
+          const el = nodes[\(ttsIndex)];
+          if (el) {
+            el.setAttribute('data-rb-tts-active', '1');
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        })()
+        """
+        _ = activeTab.webView.evaluateJavaScript(highlightJs, completionHandler: nil)
+
+        let utterance = AVSpeechUtterance(string: text)
+        let mappedRate = AVSpeechUtteranceDefaultSpeechRate * ttsRate
+        utterance.rate = min(AVSpeechUtteranceMaximumSpeechRate, max(AVSpeechUtteranceMinimumSpeechRate, mappedRate))
+        if text.range(of: "[가-힣]", options: .regularExpression) != nil {
+            utterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
+        } else if text.range(of: "[ぁ-んァ-ン]", options: .regularExpression) != nil {
+            utterance.voice = AVSpeechSynthesisVoice(language: "ja-JP")
+        } else if text.range(of: "[\\u4e00-\\u9fff]", options: .regularExpression) != nil {
+            utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        } else {
+            utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        }
+        speechSynthesizer.speak(utterance)
     }
 
     // MARK: - Script Helpers (Find in Page & Inline Translation)
@@ -782,17 +1692,16 @@ final class BrowserStore: ObservableObject {
 
     func translateSelectedText() {
         translationError = nil
-        activeTab.webView.evaluateJavaScript("window.getSelection ? window.getSelection().toString() : ''") { [weak self] res, _ in
+        let runWithText = { [weak self] (picked: String) in
             guard let self else { return }
-            let picked = (res as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if picked.isEmpty {
+                self.translationError = L10n.tr(self.uiLang, "tr.noSelection")
+                return
+            }
+            self.selectionSourceText = picked
+            self.selectionTranslatedText = ""
+            self.showSelectionResultSheet = true
             Task { @MainActor in
-                if picked.isEmpty {
-                    self.translationError = L10n.tr(self.uiLang, "tr.noSelection")
-                    return
-                }
-                self.selectionSourceText = picked
-                self.selectionTranslatedText = ""
-                self.showSelectionResultSheet = true
                 do {
                     let tr = try await TranslationEngine.shared.translateText(
                         picked,
@@ -809,6 +1718,17 @@ final class BrowserStore: ObservableObject {
                 }
             }
         }
+
+        if !liveWebSelection.isEmpty {
+            runWithText(liveWebSelection)
+            return
+        }
+        activeTab.webView.evaluateJavaScript("window.getSelection ? window.getSelection().toString() : ''") { res, _ in
+            let picked = (res as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            Task { @MainActor in
+                runWithText(picked)
+            }
+        }
     }
 
     private var activeModelId: String {
@@ -819,16 +1739,19 @@ final class BrowserStore: ObservableObject {
         }
     }
 
-    // MARK: - Inline Page Translation & Cancel
+    // MARK: - Inline Page Translation, Single-Paragraph Retranslate & Cancel
 
     func cancelTranslation() {
         translationTask?.cancel()
+        TranslationEngine.shared.cancelActiveInference()
         isTranslating = false
+        translationStatusText = ""
     }
 
     func restoreOriginal() {
         cancelTranslation()
         let tab = activeTab
+        _ = tab.webView.evaluateJavaScript("window.__fluoSetDynamicObserver && window.__fluoSetDynamicObserver(false);", completionHandler: nil)
         guard let js = loadResourceScript("inline_restore") else { return }
         tab.webView.evaluateJavaScript(js) { _, _ in
             Task { @MainActor in
@@ -837,9 +1760,80 @@ final class BrowserStore: ObservableObject {
         }
     }
 
-    func translateActiveTab(bilingual: Bool) {
+    private func applyTranslatedSegments(
+        _ pairs: [(key: String, translation: String)],
+        on tab: BrowserTab,
+        applyJs: String,
+        fontScale: Double,
+        lineHeight: Double,
+        bilingual: Bool,
+        uiJson: String
+    ) async {
+        guard !pairs.isEmpty else { return }
+        let payload: [[String: Any]] = pairs.map { item in
+            [
+                "key": item.key,
+                "translation": item.translation,
+                "uncertain": false,
+                "notes": [String](),
+            ]
+        }
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: payload),
+              let jsonStr = String(data: jsonData, encoding: .utf8) else { return }
+        let invokeJs = applyJs
+            .replacingOccurrences(of: "__PAYLOAD__", with: jsonStr)
+            .replacingOccurrences(of: "__FONT_SCALE__", with: String(format: "%.2f", fontScale))
+            .replacingOccurrences(of: "__LINE_HEIGHT__", with: String(format: "%.2f", lineHeight))
+            .replacingOccurrences(of: "__BILINGUAL__", with: bilingual ? "true" : "false")
+            .replacingOccurrences(of: "__UI_LANG__", with: uiJson)
+        _ = try? await tab.webView.evaluateJavaScript(invokeJs)
+    }
+
+    private func retranslateSingleParagraph(key: String, source: String, on tab: BrowserTab) {
+        guard !source.isEmpty, let applyJs = loadResourceScript("inline_translate") else { return }
+        let currentProvider = provider
+        let currentModel = activeModelId
+        let currentBase = openAiBaseUrl
+        let currentTarget = targetLanguage
+        let currentStyle = userData.style.rawValue
+        let currentGlossary = userData.glossary.filter(\.enabled)
+        let currentFontScale = userData.fontScale
+        let currentLineHeight = userData.lineHeight
+        let bilingual = (tab.displayMode == .bilingual)
+        let uiJson = (try? JSONEncoder().encode(uiLang.rawValue)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"ko\""
+
+        Task { @MainActor in
+            do {
+                let tr = try await TranslationEngine.shared.translateText(
+                    source,
+                    provider: currentProvider,
+                    modelId: currentModel,
+                    baseUrl: currentBase,
+                    targetLanguage: currentTarget,
+                    style: currentStyle,
+                    glossary: currentGlossary
+                )
+                TranslationEngine.shared.storeCachedTranslation(tr, for: source, targetLanguage: currentTarget, style: currentStyle)
+                await applyTranslatedSegments(
+                    [(key: key, translation: tr)],
+                    on: tab,
+                    applyJs: applyJs,
+                    fontScale: currentFontScale,
+                    lineHeight: currentLineHeight,
+                    bilingual: bilingual,
+                    uiJson: uiJson
+                )
+            } catch {
+                translationError = error.localizedDescription
+            }
+        }
+    }
+
+    func translateActiveTab(bilingual: Bool, forceRetranslate: Bool = false) {
         translationTask?.cancel()
+        TranslationEngine.shared.cancelActiveInference()
         translationError = nil
+        showAutoTranslatePrompt = false
         let tab = activeTab
         if tab.isStartPage { return }
         guard let extractJs = loadResourceScript("content_extract"),
@@ -879,50 +1873,137 @@ final class BrowserStore: ObservableObject {
                     }
                     return
                 }
-                let segments: [(key: String, text: String)] = blocks.compactMap { b in
+                var segments: [(key: String, text: String)] = blocks.compactMap { b in
                     guard let k = (b["inlineKey"] as? String) ?? (b["key"] as? String),
                           let t = b["text"] as? String, !t.isEmpty else { return nil }
                     return (k, t)
                 }
-                translationTotal = segments.count
-                translationDone = 0
                 guard !segments.isEmpty else {
                     translationError = L10n.tr(uiLang, "tr.noBlocks")
                     return
                 }
 
+                // Reorder segments by viewport proximity so visible screen paragraphs translate first!
+                if let vpOrder = try? await tab.webView.evaluateJavaScript(
+                    "window.__tbGetViewportOrder ? window.__tbGetViewportOrder() : []"
+                ) as? [String], !vpOrder.isEmpty {
+                    var rank: [String: Int] = [:]
+                    for (idx, k) in vpOrder.enumerated() {
+                        rank[k] = idx
+                    }
+                    segments.sort { a, b in
+                        let ra = rank[a.key] ?? Int.max
+                        let rb = rank[b.key] ?? Int.max
+                        return ra < rb
+                    }
+                }
+
+                translationTotal = segments.count
+                translationDone = 0
                 let uiJson = (try? JSONEncoder().encode(currentUi)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"ko\""
 
+                // Pass 1: Immediately restore any cached segment translations in 0ms
+                var uncached: [(key: String, text: String)] = []
+                var cachedBatch: [(key: String, translation: String)] = []
                 for seg in segments {
-                    try Task.checkCancellation()
-                    let tr = try await TranslationEngine.shared.translateText(
-                        seg.text,
-                        provider: currentProvider,
-                        modelId: currentModel,
-                        baseUrl: currentBase,
+                    if !forceRetranslate,
+                       let hit = TranslationEngine.shared.cachedTranslation(
+                        for: seg.text,
                         targetLanguage: currentTarget,
-                        style: currentStyle,
-                        glossary: currentGlossary
-                    )
-                    translationDone += 1
-
-                    let payload: [[String: Any]] = [[
-                        "key": seg.key,
-                        "translation": tr,
-                        "uncertain": false,
-                        "notes": [String](),
-                    ]]
-                    let jsonData = try JSONSerialization.data(withJSONObject: payload)
-                    let jsonStr = String(data: jsonData, encoding: .utf8) ?? "[]"
-                    let invokeJs = applyJs
-                        .replacingOccurrences(of: "__PAYLOAD__", with: jsonStr)
-                        .replacingOccurrences(of: "__FONT_SCALE__", with: String(format: "%.2f", currentFontScale))
-                        .replacingOccurrences(of: "__LINE_HEIGHT__", with: String(format: "%.2f", currentLineHeight))
-                        .replacingOccurrences(of: "__BILINGUAL__", with: bilingual ? "true" : "false")
-                        .replacingOccurrences(of: "__UI_LANG__", with: uiJson)
-                    _ = try? await tab.webView.evaluateJavaScript(invokeJs)
+                        style: currentStyle
+                       ) {
+                        cachedBatch.append((key: seg.key, translation: hit))
+                    } else {
+                        uncached.append(seg)
+                    }
                 }
+                if !cachedBatch.isEmpty {
+                    await applyTranslatedSegments(
+                        cachedBatch,
+                        on: tab,
+                        applyJs: applyJs,
+                        fontScale: currentFontScale,
+                        lineHeight: currentLineHeight,
+                        bilingual: bilingual,
+                        uiJson: uiJson
+                    )
+                    translationDone += cachedBatch.count
+                }
+
+                // Pass 2: Translate uncached segments (Batched for Cloud, Viewport-streamed for On-Device Hy-MT2)
+                if currentProvider != .hyMt2 && uncached.count > 1 {
+                    let batchSize = 6
+                    var idx = 0
+                    while idx < uncached.count {
+                        try Task.checkCancellation()
+                        let end = min(idx + batchSize, uncached.count)
+                        let slice = Array(uncached[idx..<end])
+                        let sources = slice.map(\.text)
+                        let translatedList = try await TranslationEngine.shared.translateBatchCloud(
+                            sources,
+                            provider: currentProvider,
+                            modelId: currentModel,
+                            baseUrl: currentBase,
+                            targetLanguage: currentTarget,
+                            style: currentStyle,
+                            glossary: currentGlossary
+                        )
+                        var pairs: [(key: String, translation: String)] = []
+                        for (offset, tr) in translatedList.enumerated() where offset < slice.count {
+                            let item = slice[offset]
+                            TranslationEngine.shared.storeCachedTranslation(
+                                tr,
+                                for: item.text,
+                                targetLanguage: currentTarget,
+                                style: currentStyle
+                            )
+                            pairs.append((key: item.key, translation: tr))
+                        }
+                        await applyTranslatedSegments(
+                            pairs,
+                            on: tab,
+                            applyJs: applyJs,
+                            fontScale: currentFontScale,
+                            lineHeight: currentLineHeight,
+                            bilingual: bilingual,
+                            uiJson: uiJson
+                        )
+                        translationDone += slice.count
+                        idx = end
+                    }
+                } else {
+                    for seg in uncached {
+                        try Task.checkCancellation()
+                        let tr = try await TranslationEngine.shared.translateText(
+                            seg.text,
+                            provider: currentProvider,
+                            modelId: currentModel,
+                            baseUrl: currentBase,
+                            targetLanguage: currentTarget,
+                            style: currentStyle,
+                            glossary: currentGlossary
+                        )
+                        TranslationEngine.shared.storeCachedTranslation(
+                            tr,
+                            for: seg.text,
+                            targetLanguage: currentTarget,
+                            style: currentStyle
+                        )
+                        translationDone += 1
+                        await applyTranslatedSegments(
+                            [(key: seg.key, translation: tr)],
+                            on: tab,
+                            applyJs: applyJs,
+                            fontScale: currentFontScale,
+                            lineHeight: currentLineHeight,
+                            bilingual: bilingual,
+                            uiJson: uiJson
+                        )
+                    }
+                }
+
                 tab.displayMode = bilingual ? .bilingual : .inline
+                _ = try? await tab.webView.evaluateJavaScript("window.__fluoSetDynamicObserver && window.__fluoSetDynamicObserver(true);")
                 if !tab.isPrivate {
                     userData.translationHistory.insert(
                         TranslationHistoryEntry(
@@ -943,7 +2024,9 @@ final class BrowserStore: ObservableObject {
             } catch is CancellationError {
                 // Cancelled cleanly
             } catch {
-                translationError = error.localizedDescription
+                if !error.localizedDescription.lowercased().contains("cancelled") {
+                    translationError = error.localizedDescription
+                }
             }
         }
     }
