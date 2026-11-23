@@ -2465,6 +2465,20 @@ pub fn go_forward(app: &AppHandle) -> Result<BrowserState, String> {
     go_to_history(app, 1)
 }
 
+pub fn jump_history_delta(app: &AppHandle, delta: isize) -> Result<BrowserState, String> {
+    go_to_history(app, delta)
+}
+
+pub fn active_tab_history(app: &AppHandle) -> Result<(usize, Vec<String>), String> {
+    let state = app.state::<AppState>();
+    let tabs = lock(&state.tabs);
+    let Some(tab) = tabs.active_tab() else {
+        return Ok((0, Vec::new()));
+    };
+    let urls = tab.history.iter().map(|h| h.url.clone()).collect();
+    Ok((tab.cursor, urls))
+}
+
 pub fn reload(app: &AppHandle) -> Result<BrowserState, String> {
     let state = app.state::<AppState>();
     let tabs = lock(&state.tabs);
@@ -2700,10 +2714,10 @@ pub fn open_overlay(
     tab_id: Option<String>,
 ) -> Result<(), String> {
     let kind = match kind {
-        "menu" | "adblock" | "site-security" | "bookmark-edit" | "translate" | "workspace"
-        | "tab-menu" | "chrome-menu" | "page-menu" | "tab-search" | "task-manager"
-        | "bookmarks" | "glossary" | "history" | "visits" | "downloads" | "settings"
-        | "feedback" | "rename-window" | "export-project" | "onboarding" => kind,
+        "menu" | "adblock" | "site-security" | "bookmark-edit" | "nav-history" | "translate"
+        | "workspace" | "tab-menu" | "chrome-menu" | "page-menu" | "tab-search"
+        | "task-manager" | "bookmarks" | "glossary" | "history" | "visits" | "downloads"
+        | "settings" | "feedback" | "rename-window" | "export-project" | "onboarding" => kind,
         _ => return Err("알 수 없는 브라우저 오버레이입니다.".into()),
     };
 

@@ -44,6 +44,7 @@
     | "adblock"
     | "site-security"
     | "bookmark-edit"
+    | "nav-history"
     | "translate"
     | "workspace"
     | "tab-menu"
@@ -214,6 +215,8 @@
   let autoTranslatePrompt = $state<{ lang: string; host: string } | null>(null);
   let ttsActive = $state(false);
   let ttsProgress = $state<{ index: number; total: number }>({ index: 0, total: 0 });
+  let audibleTabs = $state<Record<string, boolean>>({});
+  let navHistoryEntries = $state<Array<{ delta: number; url: string }>>([]);
   let bmDraftId = $state<string | null>(null);
   let bmDraftTitle = $state("");
   let bmDraftUrl = $state("");
@@ -2366,6 +2369,12 @@
         void tick().then(() => updateLayout());
         return;
       }
+      if (msg.type === "media-audio-state") {
+        if (browser.activeTab) {
+          audibleTabs = { ...audibleTabs, [browser.activeTab]: Boolean(msg.playing) };
+        }
+        return;
+      }
       if (msg.type === "page-language-detected" && msg.lang) {
         const curUrl = activeTab?.url ?? msg.url ?? "";
         if (!curUrl.startsWith("http") || inlineMode || translating) return;
@@ -3118,6 +3127,7 @@
             }}
             onmutetab={(tabId) => void toggleMuteTab(tabId)}
             onopentabsearch={(anchor) => void openOverlay("tab-search", anchor)}
+            {audibleTabs}
           />
           {#if bookmarkBarVisible}
             <BookmarkBar
@@ -3141,6 +3151,22 @@
             title={t("chrome.backTitle")}
             disabled={!browser.canGoBack}
             onclick={goBack}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!browser.canGoBack) return;
+              const anchor = anchorOf(e);
+              void api.activeTabHistory().then(([cursor, urls]) => {
+                const list: Array<{ delta: number; url: string }> = [];
+                for (let i = cursor - 1; i >= 0 && list.length < 10; i--) {
+                  list.push({ delta: i - cursor, url: urls[i] });
+                }
+                if (list.length > 0) {
+                  navHistoryEntries = list;
+                  void openOverlay("nav-history", anchor);
+                }
+              });
+            }}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" /></svg>
           </button>
@@ -3151,6 +3177,22 @@
             title={t("chrome.forwardTitle")}
             disabled={!browser.canGoForward}
             onclick={goForward}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              if (!browser.canGoForward) return;
+              const anchor = anchorOf(e);
+              void api.activeTabHistory().then(([cursor, urls]) => {
+                const list: Array<{ delta: number; url: string }> = [];
+                for (let i = cursor + 1; i < urls.length && list.length < 10; i++) {
+                  list.push({ delta: i - cursor, url: urls[i] });
+                }
+                if (list.length > 0) {
+                  navHistoryEntries = list;
+                  void openOverlay("nav-history", anchor);
+                }
+              });
+            }}
           >
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" /></svg>
           </button>
@@ -3770,6 +3812,30 @@
           <div class="menu-divider"></div>
           <button onclick={() => { void exportAppData(); }}>{t("menu.exportAll")}</button>
           <button onclick={() => { exportProject(); }}>{t("menu.exportPage")}</button>
+        </nav>
+      </div>
+    {:else if overlayKind === "nav-history"}
+      <div
+        class="overlay-menu-dismiss"
+        role="presentation"
+        onclick={(event) => {
+          if (event.target === event.currentTarget) void closeOverlay();
+        }}
+      >
+        <nav class="overlay-menu overlay-chrome-menu" aria-label="Tab History" style={popupPositionStyle("left", 280)}>
+          {#each navHistoryEntries as item (item.delta)}
+            <button
+              onclick={() => {
+                void api.jumpHistoryDelta(item.delta).then((s) => {
+                  applyBrowser(s);
+                  void closeOverlay();
+                });
+              }}
+            >
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{item.url}</span>
+              <kbd>{item.delta > 0 ? `+${item.delta}` : item.delta}</kbd>
+            </button>
+          {/each}
         </nav>
       </div>
     {:else if overlayKind === "site-security"}

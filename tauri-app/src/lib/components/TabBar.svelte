@@ -16,6 +16,7 @@
     onopentabmenu,
     onmutetab,
     onopentabsearch,
+    audibleTabs = {},
     compact = false,
   }: {
     tabs: TabState[];
@@ -31,6 +32,7 @@
     onopentabmenu: (tabId: string, anchor: { left: number; top: number; right: number; bottom: number }) => void;
     onmutetab?: (tabId: string) => void;
     onopentabsearch?: (anchor: { left: number; top: number; right: number; bottom: number }) => void;
+    audibleTabs?: Record<string, boolean>;
     compact?: boolean;
   } = $props();
 
@@ -220,18 +222,18 @@
         {#if !tab.pinned}
           <span class="tab-title">{label(tab)}</span>
         {/if}
-        {#if tab.muted}
+        {#if tab.muted || audibleTabs[tab.id]}
           <button
             class="tab-state-badge muted"
             type="button"
-            aria-label={t("tabbar.unmuteTab")}
-            title={t("tabbar.mutedTitle")}
+            aria-label={tab.muted ? t("tabbar.unmuteTab") : t("tabMenu.mute")}
+            title={tab.muted ? t("tabbar.mutedTitle") : t("tabMenu.mute")}
             onclick={(event) => {
               event.stopPropagation();
               onmutetab?.(tab.id);
             }}
           >
-            🔇
+            {tab.muted ? "🔇" : "🔊"}
           </button>
         {/if}
         {#if tab.sleeping}

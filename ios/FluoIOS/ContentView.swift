@@ -51,9 +51,7 @@ private struct SelectAllURLField: UIViewRepresentable {
         if uiView.placeholder != placeholder {
             uiView.placeholder = placeholder
         }
-        if !uiView.isFirstResponder && uiView.text != text {
-            uiView.text = text
-        } else if uiView.isFirstResponder && uiView.text != text {
+        if uiView.markedTextRange == nil && uiView.text != text {
             uiView.text = text
         }
     }

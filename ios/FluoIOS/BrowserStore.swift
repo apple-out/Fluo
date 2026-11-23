@@ -868,27 +868,73 @@ final class BrowserStore: ObservableObject {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let expr = trimmed.hasPrefix("=") ? String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces) : trimmed
         guard expr.count >= 3, expr.count <= 48 else { return nil }
-        let allowed = CharacterSet(charactersIn: "0123456789.+-*/()% ")
+        let allowed = CharacterSet(charactersIn: "0123456789.+-*/() ")
         guard expr.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
         guard expr.contains(where: { "+-*/".contains($0) }),
               expr.contains(where: { $0.isNumber }) else { return nil }
-        let sanitized = expr.replacingOccurrences(of: " ", with: "")
-        // Guard against consecutive operators that crash NSExpression
-        if sanitized.range(of: "[+\\-*/%.]{2,}", options: .regularExpression) != nil {
-            return nil
-        }
-        guard let first = sanitized.first, (first.isNumber || first == "(" || first == "-"),
-              let last = sanitized.last, (last.isNumber || last == ")") else { return nil }
-        let nsExpr = NSExpression(format: sanitized)
-        if let num = nsExpr.expressionValue(with: nil, context: nil) as? NSNumber {
-            let val = num.doubleValue
-            guard val.isFinite else { return nil }
-            if abs(val.rounded() - val) < 1e-9 {
-                return String(format: "%.0f", val)
+
+        let chars = Array(expr.replacingOccurrences(of: " ", with: ""))
+        var pos = 0
+
+        func parseExpression() -> Double? {
+            guard var lhs = parseTerm() else { return nil }
+            while pos < chars.count && (chars[pos] == "+" || chars[pos] == "-") {
+                let op = chars[pos]
+                pos += 1
+                guard let rhs = parseTerm() else { return nil }
+                lhs = (op == "+") ? (lhs + rhs) : (lhs - rhs)
             }
-            return String(format: "%.4f", val).replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
+            return lhs
         }
-        return nil
+
+        func parseTerm() -> Double? {
+            guard var lhs = parseFactor() else { return nil }
+            while pos < chars.count && (chars[pos] == "*" || chars[pos] == "/") {
+                let op = chars[pos]
+                pos += 1
+                guard let rhs = parseFactor() else { return nil }
+                if op == "/" {
+                    guard abs(rhs) > 1e-12 else { return nil }
+                    lhs /= rhs
+                } else {
+                    lhs *= rhs
+                }
+            }
+            return lhs
+        }
+
+        func parseFactor() -> Double? {
+            guard pos < chars.count else { return nil }
+            if chars[pos] == "+" {
+                pos += 1
+                return parseFactor()
+            }
+            if chars[pos] == "-" {
+                pos += 1
+                guard let v = parseFactor() else { return nil }
+                return -v
+            }
+            if chars[pos] == "(" {
+                pos += 1
+                guard let val = parseExpression(), pos < chars.count, chars[pos] == ")" else { return nil }
+                pos += 1
+                return val
+            }
+            let start = pos
+            var dotCount = 0
+            while pos < chars.count && (chars[pos].isNumber || chars[pos] == ".") {
+                if chars[pos] == "." { dotCount += 1 }
+                pos += 1
+            }
+            guard pos > start, dotCount <= 1 else { return nil }
+            return Double(String(chars[start..<pos]))
+        }
+
+        guard let val = parseExpression(), pos == chars.count, val.isFinite else { return nil }
+        if abs(val.rounded() - val) < 1e-9 {
+            return String(format: "%.0f", val)
+        }
+        return String(format: "%.4f", val).replacingOccurrences(of: "\\.?0+$", with: "", options: .regularExpression)
     }
 
     func omniboxSuggestions(for query: String) -> [OmniboxSuggestion] {
@@ -1885,7 +1931,7 @@ final class BrowserStore: ObservableObject {
 
                 // Reorder segments by viewport proximity so visible screen paragraphs translate first!
                 if let vpOrder = try? await tab.webView.evaluateJavaScript(
-                    "window.__tbGetViewportOrder ? window.__tbGetViewportOrder() : []"
+                    "window.__tbGetViewportOrder ? (window.__tbGetViewportOrder().keys || []) : []"
                 ) as? [String], !vpOrder.isEmpty {
                     var rank: [String: Int] = [:]
                     for (idx, k) in vpOrder.enumerated() {

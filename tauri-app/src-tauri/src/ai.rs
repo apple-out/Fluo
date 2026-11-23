@@ -385,7 +385,9 @@ fn http_error(operation: &str, status: u16, body: &str, credential: Option<&str>
             "접근이 거부되었습니다. API 키 권한, 프로젝트 설정 또는 모델 사용 권한을 확인하세요."
         }
         404 => "요청 경로를 찾지 못했습니다. 기본 URL과 서버의 API 호환 경로를 확인하세요.",
-        422 => "요청 입력 형식이 올바르지 않습니다. 모델 ID, 엔드포인트 경로 및 요청 본문을 확인하세요.",
+        422 => {
+            "요청 입력 형식이 올바르지 않습니다. 모델 ID, 엔드포인트 경로 및 요청 본문을 확인하세요."
+        }
         429 => "요청 한도 또는 사용량 제한에 도달했습니다. 잠시 후 다시 시도하세요.",
         500..=599 => "Provider 서버에서 오류가 발생했습니다. 잠시 후 다시 시도하세요.",
         _ => "Provider가 요청을 거부했습니다.",
@@ -541,7 +543,9 @@ fn models_endpoint(settings: &AppSettings, secrets: &Secrets) -> Result<url::Url
             }
             Ok(with_api_path(parsed, "models"))
         }
-        ProviderKind::HyMt2 => Err("Hy-MT2 온디바이스 모델 목록은 로컬 모델 관리자에서 제공합니다.".into()),
+        ProviderKind::HyMt2 => {
+            Err("Hy-MT2 온디바이스 모델 목록은 로컬 모델 관리자에서 제공합니다.".into())
+        }
     }
 }
 
@@ -786,8 +790,14 @@ pub fn detect_dialogue_register(text: &str) -> DialogueRegister {
         "なのか",
         "するぞ",
     ];
-    let polite_hits = JA_POLITE.iter().filter(|pat| trimmed.contains(**pat)).count();
-    let casual_hits = JA_CASUAL.iter().filter(|pat| trimmed.contains(**pat)).count();
+    let polite_hits = JA_POLITE
+        .iter()
+        .filter(|pat| trimmed.contains(**pat))
+        .count();
+    let casual_hits = JA_CASUAL
+        .iter()
+        .filter(|pat| trimmed.contains(**pat))
+        .count();
 
     // In Japanese fiction, any utterance containing Kana that has zero Desu/Masu/Keigo
     // markers is grammatically plain form (常体 / タメ口 = Korean 반말).
@@ -894,7 +904,10 @@ pub fn detect_auto_style(
     if url_lower.contains("/episodes/") || title_raw.contains("話") && title_raw.contains("第") {
         novel_score += 4;
     }
-    if title_lower.contains("chapter ") || title_lower.contains("prologue") || title_raw.contains("小説") {
+    if title_lower.contains("chapter ")
+        || title_lower.contains("prologue")
+        || title_raw.contains("小説")
+    {
         novel_score += 3;
     }
 
@@ -922,9 +935,16 @@ pub fn detect_auto_style(
     if TECH_URL_CUES.iter().any(|c| url_lower.contains(c)) {
         tech_score += 7;
     }
-    if ["documentation", "api reference", "tutorial", "release notes", "sdk", "cli"]
-        .iter()
-        .any(|c| title_lower.contains(c))
+    if [
+        "documentation",
+        "api reference",
+        "tutorial",
+        "release notes",
+        "sdk",
+        "cli",
+    ]
+    .iter()
+    .any(|c| title_lower.contains(c))
     {
         tech_score += 3;
     }
@@ -999,7 +1019,16 @@ pub fn detect_auto_style(
             dialogue_blocks += 1;
         }
         if [
-            "だった。", "ていた。", "ていた", "のだ。", "んだ。", "しまった。", "呟いた", "微笑んだ", "――", "……",
+            "だった。",
+            "ていた。",
+            "ていた",
+            "のだ。",
+            "んだ。",
+            "しまった。",
+            "呟いた",
+            "微笑んだ",
+            "――",
+            "……",
         ]
         .iter()
         .any(|c| s.contains(c))
@@ -1050,7 +1079,8 @@ pub fn detect_auto_style(
         if s.contains("[[img") {
             icon_marker_blocks += 1;
         }
-        if char_count <= 40 && !s.ends_with(['.', '。', '!', '?', '！', '？', '」', '』', '”', '"']) {
+        if char_count <= 40 && !s.ends_with(['.', '。', '!', '?', '！', '？', '」', '』', '”', '"'])
+        {
             short_label_blocks += 1;
         }
 
@@ -1063,7 +1093,9 @@ pub fn detect_auto_style(
     }
 
     if analyzed > 0 {
-        if dialogue_blocks >= 2 || (dialogue_blocks >= 1 && (ja_fiction_narration >= 1 || en_fiction_cues >= 1)) {
+        if dialogue_blocks >= 2
+            || (dialogue_blocks >= 1 && (ja_fiction_narration >= 1 || en_fiction_cues >= 1))
+        {
             novel_score += 5;
         } else if dialogue_blocks >= 1 && analyzed <= 4 {
             novel_score += 4;
@@ -1095,10 +1127,25 @@ pub fn detect_auto_style(
     }
 
     let candidates = [
-        (novel_score, AutoStyleKind::Novel, "auto:novel", "소설·라노벨"),
-        (tech_score, AutoStyleKind::Technical, "auto:technical", "기술·문서"),
+        (
+            novel_score,
+            AutoStyleKind::Novel,
+            "auto:novel",
+            "소설·라노벨",
+        ),
+        (
+            tech_score,
+            AutoStyleKind::Technical,
+            "auto:technical",
+            "기술·문서",
+        ),
         (wiki_score, AutoStyleKind::Wiki, "auto:wiki", "위키·정보"),
-        (casual_score, AutoStyleKind::Casual, "auto:casual", "커뮤니티·대화"),
+        (
+            casual_score,
+            AutoStyleKind::Casual,
+            "auto:casual",
+            "커뮤니티·대화",
+        ),
     ];
     let best = candidates
         .iter()
@@ -1136,7 +1183,10 @@ pub fn resolve_effective_style(
     let trimmed = requested_style.trim();
     if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
         let decision = detect_auto_style(page_url, page_title, samples);
-        (decision.effective_style.to_string(), Some(decision.label_ko))
+        (
+            decision.effective_style.to_string(),
+            Some(decision.label_ko),
+        )
     } else {
         (trimmed.to_ascii_lowercase(), None)
     }
@@ -1146,10 +1196,18 @@ fn style_instruction(style: &str) -> &str {
     match style.trim() {
         "literal" => "Translate literally and keep the original sentence structure where possible.",
         "polished" => "Prefer fluent, polished prose over literal wording.",
-        "novel" | "auto:novel" => "Translate as faithful light-novel/fiction prose: use plain narrative endings (~다/~했다) in narration, and strictly preserve each speaker's honorifics, casual/polite register, and personality in dialogue.",
-        "auto:technical" => "Translate as clear technical documentation prose: preserve code identifiers, flags, API names, and exact terminology verbatim, using concise explanatory endings (~다/~한다) or short UI labels where brief.",
-        "auto:wiki" => "Translate as concise encyclopedic/wiki prose: keep proper nouns and game/domain terms consistent, use factual plain endings (~다/~이다) for prose, and concise noun phrases for short headings or table labels.",
-        "auto:casual" => "Translate as natural conversational community/SNS prose: match each writer's casual or polite register, slang nuance, and brevity without stiff formal phrasing.",
+        "novel" | "auto:novel" => {
+            "Translate as faithful light-novel/fiction prose: use plain narrative endings (~다/~했다) in narration, and strictly preserve each speaker's honorifics, casual/polite register, and personality in dialogue."
+        }
+        "auto:technical" => {
+            "Translate as clear technical documentation prose: preserve code identifiers, flags, API names, and exact terminology verbatim, using concise explanatory endings (~다/~한다) or short UI labels where brief."
+        }
+        "auto:wiki" => {
+            "Translate as concise encyclopedic/wiki prose: keep proper nouns and game/domain terms consistent, use factual plain endings (~다/~이다) for prose, and concise noun phrases for short headings or table labels."
+        }
+        "auto:casual" => {
+            "Translate as natural conversational community/SNS prose: match each writer's casual or polite register, slang nuance, and brevity without stiff formal phrasing."
+        }
         _ => "Write natural, readable prose in the target language.",
     }
 }
@@ -1615,7 +1673,11 @@ fn parse_codex_models_json(body: &str) -> Vec<ModelInfo> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
         return curated_codex_models();
     };
-    let Some(entries) = v.get("models").or_else(|| v.get("data")).and_then(|x| x.as_array()) else {
+    let Some(entries) = v
+        .get("models")
+        .or_else(|| v.get("data"))
+        .and_then(|x| x.as_array())
+    else {
         return curated_codex_models();
     };
 
@@ -1638,7 +1700,11 @@ fn parse_codex_models_json(body: &str) -> Vec<ModelInfo> {
         if is_utility_codex_slug(slug) {
             continue;
         }
-        if entry.get("supported_in_api").and_then(serde_json::Value::as_bool) == Some(false) {
+        if entry
+            .get("supported_in_api")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+        {
             continue;
         }
         let display = entry
@@ -1713,7 +1779,12 @@ async fn list_codex_models(
     let status = response.status();
     let body = response_body_text(response, "Codex 모델 목록").await?;
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(http_error("Codex 모델 목록", status.as_u16(), &body, Some(token)));
+        return Err(http_error(
+            "Codex 모델 목록",
+            status.as_u16(),
+            &body,
+            Some(token),
+        ));
     }
     if !status.is_success() {
         return Ok(curated_codex_models());
@@ -1753,7 +1824,11 @@ fn parse_codex_sse(raw_sse: &str) -> Result<String, String> {
         let Ok(v) = serde_json::from_str::<serde_json::Value>(data) else {
             continue;
         };
-        match v.get("type").and_then(serde_json::Value::as_str).unwrap_or("") {
+        match v
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+        {
             "response.output_text.delta" => {
                 if let Some(delta) = v.get("delta").and_then(serde_json::Value::as_str) {
                     deltas.push_str(delta);
@@ -2857,7 +2932,11 @@ mod tests {
         ]}"#;
         let hidden_and_curated = super::parse_codex_models_json(review_plus_hidden);
         assert_eq!(hidden_and_curated[0].name, "gpt-5.3-codex");
-        assert!(!hidden_and_curated.iter().any(|m| m.name == "codex-auto-review"));
+        assert!(
+            !hidden_and_curated
+                .iter()
+                .any(|m| m.name == "codex-auto-review")
+        );
         assert!(!hidden_and_curated.iter().any(|m| m.name == "blocked-model"));
         assert!(hidden_and_curated.iter().any(|m| m.name == "gpt-5.4"));
 

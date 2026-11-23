@@ -100,13 +100,19 @@ pub fn detect_cloud_accounts() -> Vec<CloudAccountRoot> {
         CloudAccountRoot {
             provider: "google".into(),
             label: "Google 계정 (Google Drive)".into(),
-            root: google.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            root: google
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             available: google.is_some(),
         },
         CloudAccountRoot {
             provider: "microsoft".into(),
             label: "Microsoft 계정 (OneDrive)".into(),
-            root: microsoft.as_ref().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
+            root: microsoft
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             available: microsoft.is_some(),
         },
     ]
@@ -117,7 +123,13 @@ fn sanitize_account(email: &str) -> String {
         .trim()
         .to_ascii_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '@' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' || c == '@' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -156,7 +168,9 @@ pub fn connect_sync_account(
             _ => None,
         };
         match cloud_root {
-            Some(root) => root.join("TransrateBrowserSync").join(sanitize_account(email)),
+            Some(root) => root
+                .join("TransrateBrowserSync")
+                .join(sanitize_account(email)),
             None => state
                 .data_dir
                 .join("sync")
@@ -164,7 +178,8 @@ pub fn connect_sync_account(
                 .join(sanitize_account(email)),
         }
     };
-    fs::create_dir_all(&dir).map_err(|error| format!("동기화 폴더를 만들지 못했습니다: {error}"))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("동기화 폴더를 만들지 못했습니다: {error}"))?;
     let next_sync_dir = dir.to_string_lossy().into_owned();
     let mut cfg = {
         let db = lock(&state.db);
@@ -182,7 +197,13 @@ pub fn connect_sync_account(
     if !display_name.trim().is_empty() {
         cfg.display_name = display_name.trim().chars().take(60).collect();
     } else if cfg.display_name.trim().is_empty() {
-        cfg.display_name = email.split('@').next().unwrap_or(email).chars().take(60).collect();
+        cfg.display_name = email
+            .split('@')
+            .next()
+            .unwrap_or(email)
+            .chars()
+            .take(60)
+            .collect();
     }
     cfg.sync_dir = next_sync_dir;
     cfg.signed_in = true;
@@ -201,7 +222,9 @@ pub fn disconnect_sync_account(state: &AppState) -> Result<SyncConfig, String> {
     cfg.email.clear();
     cfg.display_name = "개인".into();
     cfg.last_synced_at = None;
-    cfg.sync_dir = default_sync_dir(&state.data_dir).to_string_lossy().into_owned();
+    cfg.sync_dir = default_sync_dir(&state.data_dir)
+        .to_string_lossy()
+        .into_owned();
     save_sync_config(&db, &cfg)?;
     Ok(cfg)
 }
@@ -383,7 +406,9 @@ fn run_sync_core(
                 macro_rules! merge_profile {
                     ($field:ident) => {
                         let rem = remote_profile.$field.trim();
-                        if !rem.is_empty() && (local_profile.$field.trim().is_empty() || prefer_remote) {
+                        if !rem.is_empty()
+                            && (local_profile.$field.trim().is_empty() || prefer_remote)
+                        {
                             local_profile.$field = rem.to_string();
                         }
                     };
@@ -449,7 +474,9 @@ fn run_sync_core(
         device_id: device_id.to_string(),
         updated_at: now,
         email: cfg.email.clone(),
-        bookmarks: cfg.sync_bookmarks.then(|| db::list_bookmarks(db).unwrap_or_default()),
+        bookmarks: cfg
+            .sync_bookmarks
+            .then(|| db::list_bookmarks(db).unwrap_or_default()),
         settings: cfg.sync_settings.then(|| settings_state.clone()),
         personal_info: cfg.sync_personal_info.then(|| {
             db::get_setting(db, "autofill_profile")
@@ -510,9 +537,10 @@ pub fn run_sync_now(app: &AppHandle, state: &AppState) -> Result<SyncConfig, Str
         let _ = app.emit_to("shell", "browser-state", snapshot);
     }
     if let Some(updated_settings) = effects.settings_updated {
-        state
-            .ad_block_enabled
-            .store(updated_settings.ad_block_enabled, std::sync::atomic::Ordering::SeqCst);
+        state.ad_block_enabled.store(
+            updated_settings.ad_block_enabled,
+            std::sync::atomic::Ordering::SeqCst,
+        );
         crate::browser::sync_adblock_state(app, updated_settings.ad_block_enabled);
         let _ = crate::browser::sync_ui_language_to_tabs(app, &updated_settings.ui_language);
         let _ = app.emit("settings-updated", crate::settings_view_pub(state));
@@ -538,17 +566,26 @@ fn external_browser_roots() -> Vec<(&'static str, &'static str, PathBuf)> {
         roots.push((
             "edge",
             "Microsoft Edge",
-            base.join("Microsoft").join("Edge").join("User Data").join("Default"),
+            base.join("Microsoft")
+                .join("Edge")
+                .join("User Data")
+                .join("Default"),
         ));
         roots.push((
             "chrome",
             "Google Chrome",
-            base.join("Google").join("Chrome").join("User Data").join("Default"),
+            base.join("Google")
+                .join("Chrome")
+                .join("User Data")
+                .join("Default"),
         ));
         roots.push((
             "whale",
             "Naver Whale",
-            base.join("Naver").join("Naver Whale").join("User Data").join("Default"),
+            base.join("Naver")
+                .join("Naver Whale")
+                .join("User Data")
+                .join("Default"),
         ));
     }
     roots
@@ -567,13 +604,13 @@ pub fn detect_external_browsers() -> Vec<DetectedBrowserProfile> {
         .collect()
 }
 
-fn collect_chromium_bookmarks(
-    node: &serde_json::Value,
-    folder: &str,
-    out: &mut Vec<Bookmark>,
-) {
+fn collect_chromium_bookmarks(node: &serde_json::Value, folder: &str, out: &mut Vec<Bookmark>) {
     let kind = node.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    let name = node.get("name").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let name = node
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
     if kind == "url" {
         if let Some(raw_url) = node.get("url").and_then(|v| v.as_str())
             && let Ok(url) = text::normalize_page_url(raw_url)
@@ -582,7 +619,11 @@ fn collect_chromium_bookmarks(
             out.push(Bookmark {
                 id: format!("imp-{}", text::page_id(&url)),
                 url: url.clone(),
-                title: if name.is_empty() { url } else { name.chars().take(300).collect() },
+                title: if name.is_empty() {
+                    url
+                } else {
+                    name.chars().take(300).collect()
+                },
                 folder: folder.chars().take(100).collect(),
                 favorite: false,
                 created_at: now,
@@ -591,8 +632,14 @@ fn collect_chromium_bookmarks(
         }
     } else if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
         let next_folder = if name.is_empty()
-            || matches!(name, "북마크 모음" | "Bookmark bar" | "Bookmarks bar" | "기타 북마크" | "Other bookmarks")
-        {
+            || matches!(
+                name,
+                "북마크 모음"
+                    | "Bookmark bar"
+                    | "Bookmarks bar"
+                    | "기타 북마크"
+                    | "Other bookmarks"
+            ) {
             folder.to_string()
         } else if folder.is_empty() {
             name.to_string()
@@ -706,7 +753,10 @@ pub fn import_passwords_csv(state: &AppState, csv_text: &str) -> Result<u32, Str
         .split(',')
         .map(|c| c.trim().trim_matches('"').to_ascii_lowercase())
         .collect();
-    let url_idx = cols.iter().position(|c| c == "url" || c == "origin").unwrap_or(1);
+    let url_idx = cols
+        .iter()
+        .position(|c| c == "url" || c == "origin")
+        .unwrap_or(1);
     let user_idx = cols
         .iter()
         .position(|c| c == "username" || c == "user")
@@ -750,8 +800,10 @@ pub async fn list_cookies(app: &AppHandle, uri: &str) -> Result<Vec<CookieEntry>
     use webview2_com::{GetCookiesCompletedHandler, take_pwstr};
     use windows::core::{HSTRING, Interface, PWSTR};
 
-    let webview: Webview = crate::browser::active_webview(app)
-        .or_else(|_| app.get_webview("shell").ok_or_else(|| "WebView 없음".to_string()))?;
+    let webview: Webview = crate::browser::active_webview(app).or_else(|_| {
+        app.get_webview("shell")
+            .ok_or_else(|| "WebView 없음".to_string())
+    })?;
     let uri = uri.trim().to_string();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx_box = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -817,7 +869,8 @@ pub async fn list_cookies(app: &AppHandle, uri: &str) -> Result<Vec<CookieEntry>
         })
         .map_err(|e| e.to_string())?;
 
-    rx.await.map_err(|_| "쿠키 조회 응답을 받지 못했습니다.".to_string())?
+    rx.await
+        .map_err(|_| "쿠키 조회 응답을 받지 못했습니다.".to_string())?
 }
 
 #[cfg(not(windows))]
@@ -835,8 +888,10 @@ pub async fn delete_cookie(
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2;
     use windows::core::{HSTRING, Interface};
 
-    let webview: Webview = crate::browser::active_webview(app)
-        .or_else(|_| app.get_webview("shell").ok_or_else(|| "WebView 없음".to_string()))?;
+    let webview: Webview = crate::browser::active_webview(app).or_else(|_| {
+        app.get_webview("shell")
+            .ok_or_else(|| "WebView 없음".to_string())
+    })?;
     let name = name.to_string();
     let domain = domain.to_string();
     let path = path.to_string();
@@ -876,19 +931,19 @@ pub async fn clear_browsing_data(app: &AppHandle, scope: &str) -> Result<(), Str
     };
     use windows::core::Interface;
 
-    let webview: Webview = crate::browser::active_webview(app)
-        .or_else(|_| app.get_webview("shell").ok_or_else(|| "WebView 없음".to_string()))?;
+    let webview: Webview = crate::browser::active_webview(app).or_else(|_| {
+        app.get_webview("shell")
+            .ok_or_else(|| "WebView 없음".to_string())
+    })?;
     let kinds = match scope {
         "cookies" => COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES,
         "cache" => COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE,
-        _ => {
-            webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_BROWSING_DATA_KINDS(
-                COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES.0
-                    | COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0
-                    | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE.0
-                    | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE.0,
-            )
-        }
+        _ => webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_BROWSING_DATA_KINDS(
+            COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_DISK_CACHE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE.0
+                | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE.0,
+        ),
     };
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx_box = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
@@ -914,7 +969,8 @@ pub async fn clear_browsing_data(app: &AppHandle, scope: &str) -> Result<(), Str
             }
         })
         .map_err(|e| e.to_string())?;
-    rx.await.map_err(|_| "데이터 삭제 응답이 없습니다.".to_string())?
+    rx.await
+        .map_err(|_| "데이터 삭제 응답이 없습니다.".to_string())?
 }
 
 #[cfg(not(windows))]
@@ -934,43 +990,49 @@ pub async fn list_web_extensions(app: &AppHandle) -> Result<Vec<WebExtensionInfo
     let (tx, rx) = tokio::sync::oneshot::channel();
     let tx_box = std::sync::Arc::new(std::sync::Mutex::new(Some(tx)));
     let tx_cb = tx_box.clone();
-    let ext_dir = app.state::<AppState>().extensions_dir.to_string_lossy().into_owned();
+    let ext_dir = app
+        .state::<AppState>()
+        .extensions_dir
+        .to_string_lossy()
+        .into_owned();
 
     webview
         .with_webview(move |platform| unsafe {
             let result = (|| -> windows::core::Result<()> {
                 let core13: ICoreWebView2_13 = platform.controller().CoreWebView2()?.cast()?;
                 let profile7: ICoreWebView2Profile7 = core13.Profile()?.cast()?;
-                let handler = ProfileGetBrowserExtensionsCompletedHandler::create(Box::new(move |hr, list| {
-                    let mut items = Vec::new();
-                    if hr.is_ok()
-                        && let Some(list) = list
-                    {
-                        let mut count = 0_u32;
-                        if list.Count(&mut count).is_ok() {
-                            for i in 0..count {
-                                if let Ok(ext) = list.GetValueAtIndex(i) {
-                                    let mut id_p = PWSTR::null();
-                                    let mut name_p = PWSTR::null();
-                                    let mut enabled = BOOL::from(true);
-                                    let _ = ext.Id(&mut id_p);
-                                    let _ = ext.Name(&mut name_p);
-                                    let _ = ext.IsEnabled(&mut enabled);
-                                    items.push(WebExtensionInfo {
-                                        id: take_pwstr(id_p),
-                                        name: take_pwstr(name_p),
-                                        enabled: enabled.as_bool(),
-                                        path: ext_dir.clone(),
-                                    });
+                let handler = ProfileGetBrowserExtensionsCompletedHandler::create(Box::new(
+                    move |hr, list| {
+                        let mut items = Vec::new();
+                        if hr.is_ok()
+                            && let Some(list) = list
+                        {
+                            let mut count = 0_u32;
+                            if list.Count(&mut count).is_ok() {
+                                for i in 0..count {
+                                    if let Ok(ext) = list.GetValueAtIndex(i) {
+                                        let mut id_p = PWSTR::null();
+                                        let mut name_p = PWSTR::null();
+                                        let mut enabled = BOOL::from(true);
+                                        let _ = ext.Id(&mut id_p);
+                                        let _ = ext.Name(&mut name_p);
+                                        let _ = ext.IsEnabled(&mut enabled);
+                                        items.push(WebExtensionInfo {
+                                            id: take_pwstr(id_p),
+                                            name: take_pwstr(name_p),
+                                            enabled: enabled.as_bool(),
+                                            path: ext_dir.clone(),
+                                        });
+                                    }
                                 }
                             }
                         }
-                    }
-                    if let Some(tx) = tx_cb.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                        let _ = tx.send(Ok(items));
-                    }
-                    Ok(())
-                }));
+                        if let Some(tx) = tx_cb.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                            let _ = tx.send(Ok(items));
+                        }
+                        Ok(())
+                    },
+                ));
                 profile7.GetBrowserExtensions(&handler)?;
                 Ok(())
             })();
@@ -981,7 +1043,8 @@ pub async fn list_web_extensions(app: &AppHandle) -> Result<Vec<WebExtensionInfo
             }
         })
         .map_err(|e| e.to_string())?;
-    rx.await.map_err(|_| "확장 목록을 읽지 못했습니다.".to_string())?
+    rx.await
+        .map_err(|_| "확장 목록을 읽지 못했습니다.".to_string())?
 }
 
 #[cfg(not(windows))]
@@ -990,7 +1053,10 @@ pub async fn list_web_extensions(_app: &AppHandle) -> Result<Vec<WebExtensionInf
 }
 
 #[cfg(windows)]
-pub async fn add_web_extension(app: &AppHandle, folder_path: &str) -> Result<WebExtensionInfo, String> {
+pub async fn add_web_extension(
+    app: &AppHandle,
+    folder_path: &str,
+) -> Result<WebExtensionInfo, String> {
     use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_13, ICoreWebView2Profile7};
     use webview2_com::{ProfileAddBrowserExtensionCompletedHandler, take_pwstr};
     use windows::core::{BOOL, HSTRING, Interface, PWSTR};
@@ -1066,12 +1132,14 @@ pub async fn add_web_extension(app: &AppHandle, folder_path: &str) -> Result<Web
             }
             e.to_string()
         })?;
-    rx.await.map_err(|_| "확장 설치 응답을 받지 못했습니다.".to_string())?
+    rx.await
+        .map_err(|_| "확장 설치 응답을 받지 못했습니다.".to_string())?
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("확장 폴더를 만들지 못했습니다: {e}"))?;
-    for entry in fs::read_dir(src).map_err(|e| format!("확장 폴더를 읽지 못했습니다: {e}"))? {
+    for entry in fs::read_dir(src).map_err(|e| format!("확장 폴더를 읽지 못했습니다: {e}"))?
+    {
         let entry = entry.map_err(|e| e.to_string())?;
         let ty = entry.file_type().map_err(|e| e.to_string())?;
         let dst_path = dst.join(entry.file_name());
@@ -1086,7 +1154,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-pub async fn add_web_extension(_app: &AppHandle, _folder_path: &str) -> Result<WebExtensionInfo, String> {
+pub async fn add_web_extension(
+    _app: &AppHandle,
+    _folder_path: &str,
+) -> Result<WebExtensionInfo, String> {
     Err("Windows에서만 지원되는 기능입니다.".into())
 }
 
@@ -1116,51 +1187,74 @@ pub async fn toggle_or_remove_web_extension(
                 let core13: ICoreWebView2_13 = platform.controller().CoreWebView2()?.cast()?;
                 let profile7: ICoreWebView2Profile7 = core13.Profile()?.cast()?;
                 let tx_list = tx_box.clone();
-                let handler = ProfileGetBrowserExtensionsCompletedHandler::create(Box::new(move |hr, list| {
-                    let mut dispatched = false;
-                    if hr.is_ok()
-                        && let Some(list) = list
-                    {
-                        let mut count = 0_u32;
-                        if list.Count(&mut count).is_ok() {
-                            for i in 0..count {
-                                if let Ok(ext) = list.GetValueAtIndex(i) {
-                                    let mut id_p = PWSTR::null();
-                                    let _ = ext.Id(&mut id_p);
-                                    if take_pwstr(id_p) == target_id {
-                                        dispatched = true;
-                                        if remove {
-                                            let tx_inner = tx_list.clone();
-                                            let rem_h = BrowserExtensionRemoveCompletedHandler::create(Box::new(move |r| {
-                                                if let Some(tx) = tx_inner.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                                                    let _ = tx.send(r.map_err(|e| e.to_string()));
-                                                }
-                                                Ok(())
-                                            }));
-                                            let _ = ext.Remove(&rem_h);
-                                        } else {
-                                            let tx_inner = tx_list.clone();
-                                            let en_h = BrowserExtensionEnableCompletedHandler::create(Box::new(move |r| {
-                                                if let Some(tx) = tx_inner.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                                                    let _ = tx.send(r.map_err(|e| e.to_string()));
-                                                }
-                                                Ok(())
-                                            }));
-                                            let _ = ext.Enable(enabled, &en_h);
+                let handler = ProfileGetBrowserExtensionsCompletedHandler::create(Box::new(
+                    move |hr, list| {
+                        let mut dispatched = false;
+                        if hr.is_ok()
+                            && let Some(list) = list
+                        {
+                            let mut count = 0_u32;
+                            if list.Count(&mut count).is_ok() {
+                                for i in 0..count {
+                                    if let Ok(ext) = list.GetValueAtIndex(i) {
+                                        let mut id_p = PWSTR::null();
+                                        let _ = ext.Id(&mut id_p);
+                                        if take_pwstr(id_p) == target_id {
+                                            dispatched = true;
+                                            if remove {
+                                                let tx_inner = tx_list.clone();
+                                                let rem_h =
+                                                    BrowserExtensionRemoveCompletedHandler::create(
+                                                        Box::new(move |r| {
+                                                            if let Some(tx) = tx_inner
+                                                                .lock()
+                                                                .unwrap_or_else(|e| e.into_inner())
+                                                                .take()
+                                                            {
+                                                                let _ =
+                                                                    tx.send(r.map_err(|e| {
+                                                                        e.to_string()
+                                                                    }));
+                                                            }
+                                                            Ok(())
+                                                        }),
+                                                    );
+                                                let _ = ext.Remove(&rem_h);
+                                            } else {
+                                                let tx_inner = tx_list.clone();
+                                                let en_h =
+                                                    BrowserExtensionEnableCompletedHandler::create(
+                                                        Box::new(move |r| {
+                                                            if let Some(tx) = tx_inner
+                                                                .lock()
+                                                                .unwrap_or_else(|e| e.into_inner())
+                                                                .take()
+                                                            {
+                                                                let _ =
+                                                                    tx.send(r.map_err(|e| {
+                                                                        e.to_string()
+                                                                    }));
+                                                            }
+                                                            Ok(())
+                                                        }),
+                                                    );
+                                                let _ = ext.Enable(enabled, &en_h);
+                                            }
+                                            break;
                                         }
-                                        break;
                                     }
                                 }
                             }
                         }
-                    }
-                    if !dispatched
-                        && let Some(tx) = tx_list.lock().unwrap_or_else(|e| e.into_inner()).take()
-                    {
-                        let _ = tx.send(Err("확장을 찾지 못했습니다.".into()));
-                    }
-                    Ok(())
-                }));
+                        if !dispatched
+                            && let Some(tx) =
+                                tx_list.lock().unwrap_or_else(|e| e.into_inner()).take()
+                        {
+                            let _ = tx.send(Err("확장을 찾지 못했습니다.".into()));
+                        }
+                        Ok(())
+                    },
+                ));
                 profile7.GetBrowserExtensions(&handler)?;
                 Ok(())
             })();
@@ -1171,7 +1265,8 @@ pub async fn toggle_or_remove_web_extension(
             }
         })
         .map_err(|e| e.to_string())?;
-    rx.await.map_err(|_| "확장 제어 응답이 없습니다.".to_string())?
+    rx.await
+        .map_err(|_| "확장 제어 응답이 없습니다.".to_string())?
 }
 
 #[cfg(not(windows))]
@@ -1345,18 +1440,42 @@ pub fn open_account_login_window(app: &AppHandle, provider: &str) -> Result<(), 
         lock(&state.settings).ui_language.clone()
     };
     let (google_hl, ms_lc, g_title, m_title) = match ui_language.as_str() {
-        "en" => ("en", "1033", "Sign in with Google", "Sign in with Microsoft"),
-        "ja" => ("ja", "1041", "Google アカウントでログイン", "Microsoft アカウントでログイン"),
-        "zh-CN" => ("zh-CN", "2052", "使用 Google 账号登录", "使用 Microsoft 账号登录"),
-        _ => ("ko", "1042", "Google 계정으로 로그인", "Microsoft 계정으로 로그인"),
+        "en" => (
+            "en",
+            "1033",
+            "Sign in with Google",
+            "Sign in with Microsoft",
+        ),
+        "ja" => (
+            "ja",
+            "1041",
+            "Google アカウントでログイン",
+            "Microsoft アカウントでログイン",
+        ),
+        "zh-CN" => (
+            "zh-CN",
+            "2052",
+            "使用 Google 账号登录",
+            "使用 Microsoft 账号登录",
+        ),
+        _ => (
+            "ko",
+            "1042",
+            "Google 계정으로 로그인",
+            "Microsoft 계정으로 로그인",
+        ),
     };
     let (start_url, title) = match provider_norm.as_str() {
         "google" => (
-            format!("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmyaccount.google.com%2F&hl={google_hl}"),
+            format!(
+                "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fmyaccount.google.com%2F&hl={google_hl}"
+            ),
             g_title,
         ),
         "microsoft" => (
-            format!("https://login.live.com/login.srf?wreply=https%3A%2F%2Faccount.microsoft.com%2F&lc={ms_lc}"),
+            format!(
+                "https://login.live.com/login.srf?wreply=https%3A%2F%2Faccount.microsoft.com%2F&lc={ms_lc}"
+            ),
             m_title,
         ),
         _ => return Err("지원하지 않는 계정 종류입니다.".into()),
@@ -1496,7 +1615,9 @@ pub fn open_account_login_window(app: &AppHandle, provider: &str) -> Result<(), 
                             let win_to_close = close_win_label.clone();
                             tauri::async_runtime::spawn(async move {
                                 let state = app_bg.state::<AppState>();
-                                match connect_sync_account(&app_bg, &state, &prov, &email, &name, None) {
+                                match connect_sync_account(
+                                    &app_bg, &state, &prov, &email, &name, None,
+                                ) {
                                     Ok(cfg) => {
                                         let _ = app_bg.emit("sync-config-updated", &cfg);
                                     }
@@ -1527,7 +1648,10 @@ pub fn open_account_login_window(app: &AppHandle, provider: &str) -> Result<(), 
 
 static CODEX_AUTH_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
-fn persist_codex_bundle(app: &AppHandle, bundle: ai::CodexTokenBundle) -> Result<SettingsView, String> {
+fn persist_codex_bundle(
+    app: &AppHandle,
+    bundle: ai::CodexTokenBundle,
+) -> Result<SettingsView, String> {
     let state = app.state::<AppState>();
     let next_secrets = {
         let mut secrets = lock(&state.secrets);
@@ -1550,12 +1674,7 @@ fn persist_codex_bundle(app: &AppHandle, bundle: ai::CodexTokenBundle) -> Result
     Ok(crate::settings_view_pub(&state))
 }
 
-fn finish_codex_oauth_code(
-    app: &AppHandle,
-    code: String,
-    verifier: String,
-    win_to_close: String,
-) {
+fn finish_codex_oauth_code(app: &AppHandle, code: String, verifier: String, win_to_close: String) {
     let app_bg = app.clone();
     tauri::async_runtime::spawn(async move {
         let client = app_bg.state::<AppState>().client.clone();
@@ -1825,9 +1944,17 @@ fn parse_local_codex_auth_json(raw: &str) -> Option<ai::CodexTokenBundle> {
             .get("expires")
             .or_else(|| node.get("expires_at"))
             .and_then(serde_json::Value::as_i64)
-            .map(|ts| if ts > 1_000_000_000_000 { ts / 1000 } else { ts });
+            .map(|ts| {
+                if ts > 1_000_000_000_000 {
+                    ts / 1000
+                } else {
+                    ts
+                }
+            });
         let (acc_access, email_access) = ai::extract_codex_claims(access_token);
-        let (acc_id, email_id) = id_token.map(ai::extract_codex_claims).unwrap_or((None, None));
+        let (acc_id, email_id) = id_token
+            .map(ai::extract_codex_claims)
+            .unwrap_or((None, None));
         let account_id = raw_acc.or(acc_access).or(acc_id);
         let email = email_id.or(email_access);
         return Some(ai::CodexTokenBundle {
@@ -1845,14 +1972,29 @@ pub fn import_local_codex_auth(app: &AppHandle) -> Result<(SettingsView, String)
     let mut paths: Vec<(PathBuf, &str)> = Vec::new();
     if let Ok(profile) = std::env::var("USERPROFILE") {
         let p = PathBuf::from(&profile);
-        paths.push((p.join(".local").join("share").join("opencode").join("auth.json"), "OpenCode auth.json"));
-        paths.push((p.join(".codex").join("auth.json"), "Codex CLI (.codex/auth.json)"));
+        paths.push((
+            p.join(".local")
+                .join("share")
+                .join("opencode")
+                .join("auth.json"),
+            "OpenCode auth.json",
+        ));
+        paths.push((
+            p.join(".codex").join("auth.json"),
+            "Codex CLI (.codex/auth.json)",
+        ));
     }
     if let Ok(appdata) = std::env::var("APPDATA") {
-        paths.push((PathBuf::from(appdata).join("opencode").join("auth.json"), "OpenCode AppData auth.json"));
+        paths.push((
+            PathBuf::from(appdata).join("opencode").join("auth.json"),
+            "OpenCode AppData auth.json",
+        ));
     }
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        paths.push((PathBuf::from(local).join("opencode").join("auth.json"), "OpenCode LocalAppData auth.json"));
+        paths.push((
+            PathBuf::from(local).join("opencode").join("auth.json"),
+            "OpenCode LocalAppData auth.json",
+        ));
     }
     for (path, label) in paths {
         if let Ok(text) = fs::read_to_string(&path)
@@ -1898,7 +2040,10 @@ mod tests {
 
     #[test]
     fn sanitize_account_keeps_safe_filename_characters() {
-        assert_eq!(sanitize_account("User.Name+1@Example.COM"), "user.name_1@example.com");
+        assert_eq!(
+            sanitize_account("User.Name+1@Example.COM"),
+            "user.name_1@example.com"
+        );
         assert_eq!(sanitize_account("bad/\\:name?"), "bad___name_");
     }
 
@@ -1955,12 +2100,27 @@ mod tests {
         let mut cfg_b = cfg_a.clone();
 
         // Device A pushes snapshot at t=100.
-        run_sync_core(&db_a, &mut settings_a, &mut tabs_a, &mut cfg_a, "device-a", 100).unwrap();
+        run_sync_core(
+            &db_a,
+            &mut settings_a,
+            &mut tabs_a,
+            &mut cfg_a,
+            "device-a",
+            100,
+        )
+        .unwrap();
         assert_eq!(cfg_a.last_synced_at, Some(100));
 
         // Device B pulls snapshot from Device A at t=105.
-        let eff_b =
-            run_sync_core(&db_b, &mut settings_b, &mut tabs_b, &mut cfg_b, "device-b", 105).unwrap();
+        let eff_b = run_sync_core(
+            &db_b,
+            &mut settings_b,
+            &mut tabs_b,
+            &mut cfg_b,
+            "device-b",
+            105,
+        )
+        .unwrap();
         assert!(eff_b.workspaces_changed);
         assert!(eff_b.settings_updated.is_some());
         assert_eq!(settings_b.ui_language, "en");
@@ -1975,9 +2135,25 @@ mod tests {
         // Now Device A deletes bm-1 locally and syncs again without another device pushing;
         // bm-1 must NOT be resurrected from the stale sync file written by Device B's pull.
         // Note: simulate same-device next sync when file timestamp is not newer or same device.
-        run_sync_core(&db_a, &mut settings_a, &mut tabs_a, &mut cfg_a, "device-a", 106).unwrap();
+        run_sync_core(
+            &db_a,
+            &mut settings_a,
+            &mut tabs_a,
+            &mut cfg_a,
+            "device-a",
+            106,
+        )
+        .unwrap();
         db::delete_bookmark(&db_a, "bm-1").unwrap();
-        run_sync_core(&db_a, &mut settings_a, &mut tabs_a, &mut cfg_a, "device-a", 110).unwrap();
+        run_sync_core(
+            &db_a,
+            &mut settings_a,
+            &mut tabs_a,
+            &mut cfg_a,
+            "device-a",
+            110,
+        )
+        .unwrap();
         assert!(db::list_bookmarks(&db_a).unwrap().is_empty());
 
         let _ = fs::remove_dir_all(&sync_root);

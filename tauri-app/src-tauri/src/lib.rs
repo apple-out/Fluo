@@ -77,7 +77,11 @@ fn sanitize_diagnostic_message(state: &AppState, raw: &str) -> String {
         .or_else(|| std::env::var_os("HOME"))
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    sanitize_diagnostic_text(&[models.as_ref(), local.as_ref(), data.as_ref()], &home, raw)
+    sanitize_diagnostic_text(
+        &[models.as_ref(), local.as_ref(), data.as_ref()],
+        &home,
+        raw,
+    )
 }
 
 fn sanitize_diagnostic_text(app_dirs: &[&str], home_dir: &str, raw: &str) -> String {
@@ -266,7 +270,10 @@ pub(crate) fn validate_settings(mut settings: AppSettings) -> Result<AppSettings
         return Err("지원하지 않는 번역 스타일입니다.".into());
     }
     settings.theme = settings.theme.trim().to_ascii_lowercase();
-    if !matches!(settings.theme.as_str(), "system" | "light" | "dark" | "sepia") {
+    if !matches!(
+        settings.theme.as_str(),
+        "system" | "light" | "dark" | "sepia"
+    ) {
         return Err("지원하지 않는 테마입니다.".into());
     }
     settings.base_url = settings.base_url.trim().to_string();
@@ -433,7 +440,9 @@ async fn ensure_fresh_codex_secrets(state: &AppState, secrets: &mut Secrets) {
         return;
     };
     let acc_hint = secrets.codex_account_id.clone();
-    if let Ok(bundle) = ai::refresh_codex_token(&state.client, &refresh_token, acc_hint.as_deref()).await {
+    if let Ok(bundle) =
+        ai::refresh_codex_token(&state.client, &refresh_token, acc_hint.as_deref()).await
+    {
         let updated = {
             let mut guard = lock(&state.secrets);
             guard.codex_access_token = Some(bundle.access_token.clone());
@@ -583,6 +592,16 @@ fn go_back(app: AppHandle) -> Result<BrowserState, String> {
 #[tauri::command]
 fn go_forward(app: AppHandle) -> Result<BrowserState, String> {
     browser::go_forward(&app)
+}
+
+#[tauri::command]
+fn jump_history_delta(app: AppHandle, delta: isize) -> Result<BrowserState, String> {
+    browser::jump_history_delta(&app, delta)
+}
+
+#[tauri::command]
+fn active_tab_history(app: AppHandle) -> Result<(usize, Vec<String>), String> {
+    browser::active_tab_history(&app)
 }
 
 #[tauri::command]
@@ -797,7 +816,8 @@ fn set_ui_language(
         next.ui_language = ui_language;
         let mut validated = validate_settings(next)?;
         if sync_target_language == Some(true) {
-            validated.target_language = default_target_language_for_ui(&validated.ui_language).to_string();
+            validated.target_language =
+                default_target_language_for_ui(&validated.ui_language).to_string();
         }
         let json = serde_json::to_string(&validated).map_err(|e| e.to_string())?;
         {
@@ -943,7 +963,16 @@ async fn test_connection(
         let token = CancellationToken::new();
         return match state
             .hy_mt2
-            .translate_segments(&settings, &test_seg, &context, None, &[], false, token, |_| {})
+            .translate_segments(
+                &settings,
+                &test_seg,
+                &context,
+                None,
+                &[],
+                false,
+                token,
+                |_| {},
+            )
             .await
         {
             Ok((res, model_id, backend)) => Ok(ConnectionTest {
@@ -1391,79 +1420,77 @@ async fn run_translation_request(
         hy_prior_pairs.extend(cached_pairs);
     }
 
-    let mut persist_translated = |item: &MissingSegment,
-                                  result: &SegmentResult,
-                                  model_label: &str|
-     -> Result<(), String> {
-        let mut stored = SegmentResult {
-            id: item.input.id.clone(),
-            translation: result.translation.clone(),
-            uncertain: result.uncertain,
-            notes: result.notes.clone(),
-            cached: false,
-        };
-        if !ai::numeric_tokens_match(&item.input.text, &stored.translation) {
-            stored.uncertain = true;
-            stored
-                .notes
-                .push("원문과 번역문의 숫자 또는 단위 표기가 다릅니다.".into());
-        }
-        if !stored.uncertain {
-            let db = lock(&state.db);
-            db::put_translation(
-                &db,
-                &item.cache_key,
-                &item.source_hash,
-                &provider_key,
-                model_label,
-                &style,
-                &target_language,
-                &stored,
-            )?;
-        }
-        if let Some(ch) = on_event {
-            let _ = ch.send(TranslationStreamEvent::Segment {
-                result: stored.clone(),
-            });
-        }
-        results.insert(item.input.id.clone(), stored.clone());
-        if let Some(dups) = duplicate_ids.get(&item.input.id) {
-            for dup_id in dups {
-                let mut dup_result = stored.clone();
-                dup_result.id = dup_id.clone();
-                dup_result.cached = true;
-                if let Some(ch) = on_event {
-                    let _ = ch.send(TranslationStreamEvent::Segment {
-                        result: dup_result.clone(),
-                    });
-                }
-                results.insert(dup_id.clone(), dup_result);
+    let mut persist_translated =
+        |item: &MissingSegment, result: &SegmentResult, model_label: &str| -> Result<(), String> {
+            let mut stored = SegmentResult {
+                id: item.input.id.clone(),
+                translation: result.translation.clone(),
+                uncertain: result.uncertain,
+                notes: result.notes.clone(),
+                cached: false,
+            };
+            if !ai::numeric_tokens_match(&item.input.text, &stored.translation) {
+                stored.uncertain = true;
+                stored
+                    .notes
+                    .push("원문과 번역문의 숫자 또는 단위 표기가 다릅니다.".into());
             }
-        }
-        if !is_private_tab {
-            page_entries.push((item.source_hash.clone(), stored.translation.clone()));
-            if let Some(url) = page_url.as_deref()
-                && let Ok(url) = text::normalize_page_url(url)
-            {
+            if !stored.uncertain {
                 let db = lock(&state.db);
-                db::add_translation_history(
+                db::put_translation(
                     &db,
-                    &url,
-                    page_title.as_deref().unwrap_or(""),
-                    &item.input.text,
-                    &stored.translation,
+                    &item.cache_key,
+                    &item.source_hash,
+                    &provider_key,
                     model_label,
+                    &style,
+                    &target_language,
+                    &stored,
                 )?;
             }
-        }
-        if let Some(ch) = on_event {
-            let _ = ch.send(TranslationStreamEvent::Progress {
-                done: results.len(),
-                total: total_segments,
-            });
-        }
-        Ok(())
-    };
+            if let Some(ch) = on_event {
+                let _ = ch.send(TranslationStreamEvent::Segment {
+                    result: stored.clone(),
+                });
+            }
+            results.insert(item.input.id.clone(), stored.clone());
+            if let Some(dups) = duplicate_ids.get(&item.input.id) {
+                for dup_id in dups {
+                    let mut dup_result = stored.clone();
+                    dup_result.id = dup_id.clone();
+                    dup_result.cached = true;
+                    if let Some(ch) = on_event {
+                        let _ = ch.send(TranslationStreamEvent::Segment {
+                            result: dup_result.clone(),
+                        });
+                    }
+                    results.insert(dup_id.clone(), dup_result);
+                }
+            }
+            if !is_private_tab {
+                page_entries.push((item.source_hash.clone(), stored.translation.clone()));
+                if let Some(url) = page_url.as_deref()
+                    && let Ok(url) = text::normalize_page_url(url)
+                {
+                    let db = lock(&state.db);
+                    db::add_translation_history(
+                        &db,
+                        &url,
+                        page_title.as_deref().unwrap_or(""),
+                        &item.input.text,
+                        &stored.translation,
+                        model_label,
+                    )?;
+                }
+            }
+            if let Some(ch) = on_event {
+                let _ = ch.send(TranslationStreamEvent::Progress {
+                    done: results.len(),
+                    total: total_segments,
+                });
+            }
+            Ok(())
+        };
 
     if settings.provider == ProviderKind::HyMt2 {
         struct BufferedHyMt2DbWrite {
@@ -1732,13 +1759,8 @@ async fn run_translation_request(
 
     if !is_private_tab && let Some(url) = page_url.as_deref() {
         let db = lock(&state.db);
-        let _ = db::save_page_translations(
-            &db,
-            url,
-            &target_language,
-            &requested_style,
-            &page_entries,
-        );
+        let _ =
+            db::save_page_translations(&db, url, &target_language, &requested_style, &page_entries);
     }
 
     Ok(order_results(&segments, results))
@@ -2021,7 +2043,10 @@ fn autofill_saved_login(
         "username": login.username,
         "password": login.password,
     });
-    browser::eval_on_active_tab(&app, &format!("window.__tbApplyLoginAutofill?.({payload});"))
+    browser::eval_on_active_tab(
+        &app,
+        &format!("window.__tbApplyLoginAutofill?.({payload});"),
+    )
 }
 
 #[tauri::command]
@@ -2051,7 +2076,10 @@ fn autofill_profile_active_tab(app: AppHandle, state: State<'_, AppState>) -> Re
             .unwrap_or_default()
     };
     let payload = serde_json::to_string(&profile).map_err(|e| e.to_string())?;
-    browser::eval_on_active_tab(&app, &format!("window.__tbApplyProfileAutofill?.({payload});"))
+    browser::eval_on_active_tab(
+        &app,
+        &format!("window.__tbApplyProfileAutofill?.({payload});"),
+    )
 }
 
 #[tauri::command]
@@ -2517,13 +2545,20 @@ async fn download_hy_mt2_model(
             "model-download",
             &format!("ok id={} bytes={}", m.id, m.expected_bytes),
         ),
-        Err(err) => push_diagnostic(&state, "model-download", &format!("err id={model_id} {err}")),
+        Err(err) => push_diagnostic(
+            &state,
+            "model-download",
+            &format!("err id={model_id} {err}"),
+        ),
     }
     res
 }
 
 #[tauri::command]
-async fn cancel_hy_mt2_download(state: State<'_, AppState>, model_id: String) -> Result<bool, String> {
+async fn cancel_hy_mt2_download(
+    state: State<'_, AppState>,
+    model_id: String,
+) -> Result<bool, String> {
     Ok(state.hy_mt2.cancel_download(&model_id).await)
 }
 
@@ -2605,7 +2640,10 @@ async fn get_tester_diagnostics(state: State<'_, AppState>) -> Result<String, St
 }
 
 #[tauri::command]
-async fn save_tester_diagnostics(app: AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+async fn save_tester_diagnostics(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let report = build_tester_diagnostics_report(&state).await?;
     let stem = format!("translate-browser-diagnostics-{}", db::now_secs());
     write_unique_download_file(&app, &state, &stem, "txt", &report)
@@ -2683,8 +2721,7 @@ fn truncate_feedback_chars(raw: &str, max_chars: usize) -> String {
 fn encode_uri_component_percent20(input: &str) -> String {
     let mut out = String::with_capacity(input.len() * 2);
     for &b in input.as_bytes() {
-        let is_unreserved =
-            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        let is_unreserved = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
         if is_unreserved {
             out.push(b as char);
         } else {
@@ -2711,13 +2748,14 @@ fn build_feedback_issue_content(
             _ => return Err("제보 분류는 버그·불편·번역 오류 중 하나여야 합니다.".into()),
         };
 
-    let summary_clean = input
-        .summary
-        .replace(['\r', '\n'], " ")
+    let summary_clean = input.summary.replace(['\r', '\n'], " ").trim().to_string();
+    let description_clean = input.description.trim().to_string();
+    let source_clean = input
+        .source_text
+        .as_deref()
+        .unwrap_or("")
         .trim()
         .to_string();
-    let description_clean = input.description.trim().to_string();
-    let source_clean = input.source_text.as_deref().unwrap_or("").trim().to_string();
     let translated_clean = input
         .translated_text
         .as_deref()
@@ -2774,7 +2812,10 @@ fn build_feedback_issue_content(
         ));
     }
     if let Some(url) = sanitized_page_url.filter(|u| !u.trim().is_empty()) {
-        lines.push(format!("- **Page URL:** {}", truncate_feedback_chars(url, 500)));
+        lines.push(format!(
+            "- **Page URL:** {}",
+            truncate_feedback_chars(url, 500)
+        ));
     }
     lines.push(String::new());
     lines.push("### Description".to_string());
@@ -2870,14 +2911,13 @@ async fn submit_feedback_report(
         None
     };
 
-    let (norm_category, gh_label, title, body, github_issue_url) =
-        build_feedback_issue_content(
-            &input,
-            env!("CARGO_PKG_VERSION"),
-            &settings,
-            diagnostics.as_deref(),
-            sanitized_page_url.as_deref(),
-        )?;
+    let (norm_category, gh_label, title, body, github_issue_url) = build_feedback_issue_content(
+        &input,
+        env!("CARGO_PKG_VERSION"),
+        &settings,
+        diagnostics.as_deref(),
+        sanitized_page_url.as_deref(),
+    )?;
 
     let Some((endpoint_url, _source)) = resolve_feedback_endpoint(&settings) else {
         return Ok(FeedbackSubmitResult {
@@ -2952,7 +2992,11 @@ async fn submit_feedback_report(
                 .and_then(|v| v.get("issueUrl").and_then(|u| u.as_str()))
                 .map(str::to_string);
             if status.is_success() && !json_ok_false {
-                push_diagnostic(&state, "feedback", &format!("delivered category={norm_category}"));
+                push_diagnostic(
+                    &state,
+                    "feedback",
+                    &format!("delivered category={norm_category}"),
+                );
                 Ok(FeedbackSubmitResult {
                     delivered: true,
                     method: "relay".to_string(),
@@ -3040,7 +3084,11 @@ async fn build_tester_diagnostics_report(state: &AppState) -> Result<String, Str
     let mut lines = Vec::new();
     lines.push("# Fluo 진단 리포트 (개인정보 미포함)".to_string());
     lines.push(format!("- App Version: {}", env!("CARGO_PKG_VERSION")));
-    lines.push(format!("- Platform: {} / {}", std::env::consts::OS, std::env::consts::ARCH));
+    lines.push(format!(
+        "- Platform: {} / {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     lines.push(format!("- WebView2: {webview_ver}"));
     lines.push(String::new());
     lines.push("## 하드웨어 및 가속 백엔드".to_string());
@@ -3220,12 +3268,12 @@ pub fn run() {
             };
             let webview_extensions_enabled = settings.browser_extensions_enabled;
             let startup_mode = settings.startup_mode.clone();
-            let initial_home_url = if startup_mode != "search" && !settings.home_url.trim().is_empty()
-            {
-                settings.home_url.clone()
-            } else {
-                home_url(&settings.search_engine).to_string()
-            };
+            let initial_home_url =
+                if startup_mode != "search" && !settings.home_url.trim().is_empty() {
+                    settings.home_url.clone()
+                } else {
+                    home_url(&settings.search_engine).to_string()
+                };
             let session = db::load_session(&connection);
             let secrets = credentials::load(&data_dir);
             let client = reqwest::Client::builder()
@@ -3376,6 +3424,8 @@ pub fn run() {
             navigate,
             go_back,
             go_forward,
+            jump_history_delta,
+            active_tab_history,
             reload,
             stop_loading,
             sync_reading_position,
@@ -3488,9 +3538,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_feedback_issue_content, home_url, sanitize_diagnostic_text,
+        FEEDBACK_REPO_URL, build_feedback_issue_content, home_url, sanitize_diagnostic_text,
         starter_settings_for_hardware, validate_feedback_endpoint_url, validate_settings,
-        wait_for_request_interval, FEEDBACK_REPO_URL,
+        wait_for_request_interval,
     };
     use crate::hy_mt2::HardwareProfile;
     use crate::model::{AppSettings, FeedbackReportInput, ProviderKind};
@@ -3516,7 +3566,12 @@ mod tests {
         bad_lang.ui_language = "fr".into();
         assert!(validate_settings(bad_lang).is_err());
 
-        for (raw, expected) in [("ko", "ko"), ("EN-US", "en"), ("ja_jp", "ja"), ("zh-hans", "zh-CN")] {
+        for (raw, expected) in [
+            ("ko", "ko"),
+            ("EN-US", "en"),
+            ("ja_jp", "ja"),
+            ("zh-hans", "zh-CN"),
+        ] {
             let mut s = AppSettings::default();
             s.ui_language = raw.into();
             let validated = validate_settings(s).unwrap();
@@ -3625,8 +3680,10 @@ mod tests {
         assert!(validate_feedback_endpoint_url("https://api.web3forms.com/submit").is_ok());
 
         assert!(
-            validate_feedback_endpoint_url("https://script.google.com/macros/s/FAKE_SCRIPT_ID/exec")
-                .is_err()
+            validate_feedback_endpoint_url(
+                "https://script.google.com/macros/s/FAKE_SCRIPT_ID/exec"
+            )
+            .is_err()
         );
         assert!(
             validate_feedback_endpoint_url("http://feedback-relay.apple-out.workers.dev/report")
@@ -3728,7 +3785,8 @@ mod tests {
                 model: stale.into(),
                 ..AppSettings::default()
             };
-            let validated = validate_settings(s).expect("stale Hy-MT2 model should fall back cleanly");
+            let validated =
+                validate_settings(s).expect("stale Hy-MT2 model should fall back cleanly");
             assert_eq!(validated.model, crate::hy_mt2::DEFAULT_HY_MT2_MODEL_ID);
         }
 

@@ -67,7 +67,7 @@ final class AdBlockManager {
                 .replacingOccurrences(of: ".", with: "\\.")
             return [
                 "trigger": [
-                    "url-filter": "^https?://([a-z0-9-]+\\.)*\(d)([/:?]|$)",
+                    "url-filter": "^https?://([a-z0-9-]+\\.)*\(d)[:/?]",
                     "load-type": ["third-party"]
                 ],
                 "action": ["type": "block"]

@@ -4,7 +4,7 @@ use std::io::{BufWriter, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc as std_mpsc, Arc, Mutex as StdMutex, OnceLock, RwLock as StdRwLock};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock, RwLock as StdRwLock, mpsc as std_mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::StreamExt;
@@ -14,7 +14,7 @@ use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::{LlamaModelParams, LlamaSplitMode};
 use llama_cpp_2::model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
-use llama_cpp_2::{list_llama_ggml_backend_devices, LlamaBackendDeviceType};
+use llama_cpp_2::{LlamaBackendDeviceType, list_llama_ggml_backend_devices};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -93,7 +93,9 @@ pub const HY_MT2_CATALOG: &[HyMt2ModelSpec] = &[
         description: "약 572MB 초경량 2-bit 양자화 · iPhone 14 Pro / 15(A16 Bionic) 다중 탭 브라우징 및 저사양 PC 배터리 절약용",
         min_ram_mb: 3_500,
         min_vram_mb: 0,
-        experimental_kernel_note: Some("Tencent AngelSlim 2-Bit (STQ 커널 요구 시 Q4_K_M 사용 권장)"),
+        experimental_kernel_note: Some(
+            "Tencent AngelSlim 2-Bit (STQ 커널 요구 시 Q4_K_M 사용 권장)",
+        ),
     },
     HyMt2ModelSpec {
         id: "Hy-MT2-1.8B-1.25Bit.gguf",
@@ -106,7 +108,9 @@ pub const HY_MT2_CATALOG: &[HyMt2ModelSpec] = &[
         description: "약 440MB AngelSlim 1.25-bit 극한 경량 모델",
         min_ram_mb: 3_000,
         min_vram_mb: 0,
-        experimental_kernel_note: Some("Tencent AngelSlim 1.25-Bit (upstream llama.cpp PR #22836 기반 STQ)"),
+        experimental_kernel_note: Some(
+            "Tencent AngelSlim 1.25-Bit (upstream llama.cpp PR #22836 기반 STQ)",
+        ),
     },
 ];
 
@@ -368,12 +372,7 @@ impl HyMt2Engine {
     }
 
     pub async fn unload(&self) -> bool {
-        let has_worker = self
-            .worker_tx
-            .lock()
-            .ok()
-            .and_then(|g| g.clone())
-            .is_some();
+        let has_worker = self.worker_tx.lock().ok().and_then(|g| g.clone()).is_some();
         if !has_worker {
             if let Ok(mut meta) = self.loaded_meta.write() {
                 *meta = None;
@@ -414,14 +413,11 @@ impl HyMt2Engine {
     }
 
     pub async fn loaded_model_info(&self) -> Option<(String, String)> {
-        self.loaded_meta
-            .read()
-            .ok()
-            .and_then(|guard| {
-                guard
-                    .as_ref()
-                    .map(|item| (item.model_id.clone(), item.backend_label.clone()))
-            })
+        self.loaded_meta.read().ok().and_then(|guard| {
+            guard
+                .as_ref()
+                .map(|item| (item.model_id.clone(), item.backend_label.clone()))
+        })
     }
 
     pub fn detect_hardware(&self) -> HardwareProfile {
@@ -636,13 +632,8 @@ impl HyMt2Engine {
             .read()
             .ok()
             .and_then(|guard| guard.as_ref().map(|loaded| loaded.model_id.clone()));
-        let active_downloads: Vec<String> = self
-            .download_cancels
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect();
+        let active_downloads: Vec<String> =
+            self.download_cancels.lock().await.keys().cloned().collect();
 
         let mut list: Vec<HyMt2ModelState> = HY_MT2_CATALOG
             .iter()
@@ -689,7 +680,10 @@ impl HyMt2Engine {
                 if !name.to_ascii_lowercase().ends_with(".gguf") {
                     continue;
                 }
-                if list.iter().any(|item| item.filename.eq_ignore_ascii_case(name)) {
+                if list
+                    .iter()
+                    .any(|item| item.filename.eq_ignore_ascii_case(name))
+                {
                     continue;
                 }
                 let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
@@ -939,7 +933,9 @@ impl HyMt2Engine {
         let append_mode = status == reqwest::StatusCode::PARTIAL_CONTENT && existing_len > 0;
         if !status.is_success() {
             // Range unsatisfactory when part already equals total size: try fresh/verify.
-            if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && existing_len == spec.expected_bytes {
+            if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE
+                && existing_len == spec.expected_bytes
+            {
                 // Fall through to verify directly
                 existing_len = spec.expected_bytes;
             } else {
@@ -958,7 +954,10 @@ impl HyMt2Engine {
             };
             let mut downloaded = if append_mode { existing_len } else { 0 };
             let file = if append_mode {
-                OpenOptions::new().create(true).append(true).open(&part_path)
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&part_path)
             } else {
                 File::create(&part_path)
             }
@@ -1111,7 +1110,8 @@ impl HyMt2Engine {
             let _ = fs::remove_file(&part);
         }
         if target.exists() {
-            fs::remove_file(&target).map_err(|e| format!("모델 파일을 삭제하지 못했습니다: {e}"))?;
+            fs::remove_file(&target)
+                .map_err(|e| format!("모델 파일을 삭제하지 못했습니다: {e}"))?;
         }
         Ok(())
     }
@@ -1141,7 +1141,10 @@ impl HyMt2Engine {
         })
     }
 
-    pub async fn test_model_load(&self, settings: &AppSettings) -> Result<(String, String), String> {
+    pub async fn test_model_load(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<(String, String), String> {
         let spec = self.resolve_worker_model_spec(settings)?;
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         self.send_worker_command(WorkerCommand::EnsureLoaded {
@@ -1279,7 +1282,11 @@ impl HyMt2Engine {
 
     async fn store_page_history(&self, page_key: String, mut history: Vec<ContextPair>) {
         // Keep only entries with an actual translation so subsequent chunks inherit clean pairs.
-        history.retain(|pair| pair.translation.as_deref().is_some_and(|t| !t.trim().is_empty()));
+        history.retain(|pair| {
+            pair.translation
+                .as_deref()
+                .is_some_and(|t| !t.trim().is_empty())
+        });
         const MAX_PAGE_HISTORY: usize = 240;
         if history.len() > MAX_PAGE_HISTORY {
             history.drain(..history.len() - MAX_PAGE_HISTORY);
@@ -1387,19 +1394,15 @@ fn run_hy_mt2_worker(
                     continue 'attempt_loop;
                 }
             };
-            let mut session = match HyMt2Session::new(
-                &backend,
-                &model,
-                spec.ctx_size,
-                spec.threads,
-                attempt_ngl,
-            ) {
-                Ok(s) => s,
-                Err(err) => {
-                    last_load_err = err;
-                    continue 'attempt_loop;
-                }
-            };
+            let mut session =
+                match HyMt2Session::new(&backend, &model, spec.ctx_size, spec.threads, attempt_ngl)
+                {
+                    Ok(s) => s,
+                    Err(err) => {
+                        last_load_err = err;
+                        continue 'attempt_loop;
+                    }
+                };
 
             let mut active_cmd = active_cmd_slot
                 .take()
@@ -1846,10 +1849,7 @@ pub fn split_long_paragraph_sentences(text: &str) -> Option<Vec<String>> {
 }
 
 fn join_translated_sentences(parts: &[String], norm_target: &str) -> String {
-    let sep = if matches!(
-        norm_target,
-        "Japanese" | "Chinese" | "Traditional Chinese"
-    ) {
+    let sep = if matches!(norm_target, "Japanese" | "Chinese" | "Traditional Chinese") {
         ""
     } else {
         " "
@@ -2248,7 +2248,11 @@ fn prepare_prompt_tokens(
     let parse_special = formatted_prompt.contains("<｜hy_")
         || formatted_prompt.contains("<|")
         || formatted_prompt.contains("[|");
-    let tokens = vocab.tokenize(formatted_prompt.as_bytes(), !uses_hy_template, parse_special);
+    let tokens = vocab.tokenize(
+        formatted_prompt.as_bytes(),
+        !uses_hy_template,
+        parse_special,
+    );
     (tokens, src_toks)
 }
 
@@ -2297,7 +2301,9 @@ struct ActiveBatchSlot {
     sampler: LlamaSampler,
 }
 
-fn compute_shared_prefix(jobs: &std::collections::VecDeque<PreparedParallelJob>) -> Vec<llama_cpp_2::token::LlamaToken> {
+fn compute_shared_prefix(
+    jobs: &std::collections::VecDeque<PreparedParallelJob>,
+) -> Vec<llama_cpp_2::token::LlamaToken> {
     if jobs.len() < 2 {
         return Vec::new();
     }
@@ -2360,30 +2366,32 @@ fn translate_parallel_batch(
     let vocab = model.vocab();
     let norm_target = normalize_target_language_for_hy_mt2(target_language);
     let mut results: Vec<Option<String>> = vec![None; segments.len()];
-    let mut queue = std::collections::VecDeque::<PreparedParallelJob>::with_capacity(segments.len());
+    let mut queue =
+        std::collections::VecDeque::<PreparedParallelJob>::with_capacity(segments.len());
 
-    let emit_result = |job_idx: usize, final_text: String, cached: bool, results: &mut [Option<String>]| {
-        let seg = segments[job_idx];
-        results[job_idx] = Some(final_text.clone());
-        let _ = progress_tx.send(SegmentResult {
-            id: seg.id.clone(),
-            translation: final_text.clone(),
-            uncertain: false,
-            notes: Vec::new(),
-            cached,
-        });
-        if let Some(dups) = duplicates_for_slot.get(job_idx) {
-            for dup_seg in dups {
-                let _ = progress_tx.send(SegmentResult {
-                    id: dup_seg.id.clone(),
-                    translation: final_text.clone(),
-                    uncertain: false,
-                    notes: Vec::new(),
-                    cached: true,
-                });
+    let emit_result =
+        |job_idx: usize, final_text: String, cached: bool, results: &mut [Option<String>]| {
+            let seg = segments[job_idx];
+            results[job_idx] = Some(final_text.clone());
+            let _ = progress_tx.send(SegmentResult {
+                id: seg.id.clone(),
+                translation: final_text.clone(),
+                uncertain: false,
+                notes: Vec::new(),
+                cached,
+            });
+            if let Some(dups) = duplicates_for_slot.get(job_idx) {
+                for dup_seg in dups {
+                    let _ = progress_tx.send(SegmentResult {
+                        id: dup_seg.id.clone(),
+                        translation: final_text.clone(),
+                        uncertain: false,
+                        notes: Vec::new(),
+                        cached: true,
+                    });
+                }
             }
-        }
-    };
+        };
 
     let mut part_outputs: Vec<Vec<Option<String>>> = Vec::with_capacity(segments.len());
     let mut part_remaining: Vec<usize> = vec![0; segments.len()];
@@ -2392,8 +2400,8 @@ fn translate_parallel_batch(
         if cancel.is_cancelled() {
             return Err("번역을 취소했습니다.".into());
         }
-        let parts = split_long_paragraph_sentences(&seg.text)
-            .unwrap_or_else(|| vec![seg.text.clone()]);
+        let parts =
+            split_long_paragraph_sentences(&seg.text).unwrap_or_else(|| vec![seg.text.clone()]);
         let num_parts = parts.len();
         part_outputs.push(vec![None; num_parts]);
         part_remaining[parent_idx] = num_parts;
@@ -2514,7 +2522,11 @@ fn translate_parallel_batch(
         prefix_kv_ready = true;
     }
 
-    let active_prefix_cells = if prefix_kv_ready { shared_prefix_len } else { 0 };
+    let active_prefix_cells = if prefix_kv_ready {
+        shared_prefix_len
+    } else {
+        0
+    };
     let kv_limit = (session.current_n_ctx as usize).saturating_sub(16 + active_prefix_cells);
     let mut slots: Vec<Option<ActiveBatchSlot>> = (0..max_slots).map(|_| None).collect();
     let mut active_reserved_kv = 0usize;
@@ -2578,7 +2590,9 @@ fn translate_parallel_batch(
             let effective_max_new = needed
                 .saturating_sub(prompt_exclusive + 8)
                 .min(job.max_new as usize) as u32;
-            let _ = session.ctx.clear_kv_cache_seq(Some(s_idx as u32), None, None);
+            let _ = session
+                .ctx
+                .clear_kv_cache_seq(Some(s_idx as u32), None, None);
             let prefill_start = if uses_shared
                 && session
                     .ctx
@@ -2701,7 +2715,8 @@ fn translate_parallel_batch(
                             .decode_to_string(&piece_buf, &mut slot.output, false);
                     }
 
-                    if piece_might_complete_stop_marker(&piece_buf) && has_stop_marker(&slot.output) {
+                    if piece_might_complete_stop_marker(&piece_buf) && has_stop_marker(&slot.output)
+                    {
                         finished = true;
                     } else if let Some(trim_len) = slot.rep_guard.push_and_check(token, pre_len) {
                         slot.output.truncate(trim_len);
@@ -3129,9 +3144,8 @@ pub fn normalize_target_language_for_hy_mt2(lang: &str) -> String {
         "ko" | "kor" | "korean" | "한국어" => "Korean".into(),
         "en" | "eng" | "english" | "영어" => "English".into(),
         "ja" | "jpn" | "japanese" | "일본어" | "日本語" => "Japanese".into(),
-        "zh" | "zh-cn" | "zh-hans" | "chinese" | "중국어" | "中文" | "中文(简体)" | "중국어(간체)" => {
-            "Chinese".into()
-        }
+        "zh" | "zh-cn" | "zh-hans" | "chinese" | "중국어" | "中文" | "中文(简体)"
+        | "중국어(간체)" => "Chinese".into(),
         "zh-tw" | "zh-hant" | "중국어(번체)" | "번체중국어" | "繁體中文" | "中文(繁體)" => {
             "Traditional Chinese".into()
         }
@@ -3379,16 +3393,41 @@ fn extract_domain_terms(text: &str) -> HashSet<String> {
         }
         if chars[i].is_ascii_uppercase() {
             let start = i;
-            while i < chars.len() && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '\'') {
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '-' || chars[i] == '\'')
+            {
                 i += 1;
             }
             if i - start >= 3 {
                 let word: String = chars[start..i].iter().collect();
                 if !matches!(
                     word.as_str(),
-                    "The" | "This" | "That" | "These" | "Those" | "When" | "Where" | "What" | "Why" | "How"
-                        | "And" | "But" | "For" | "With" | "From" | "Then" | "She" | "Her" | "His" | "They"
-                        | "You" | "Wait" | "Please" | "Don't" | "Doesn't" | "Isn't"
+                    "The"
+                        | "This"
+                        | "That"
+                        | "These"
+                        | "Those"
+                        | "When"
+                        | "Where"
+                        | "What"
+                        | "Why"
+                        | "How"
+                        | "And"
+                        | "But"
+                        | "For"
+                        | "With"
+                        | "From"
+                        | "Then"
+                        | "She"
+                        | "Her"
+                        | "His"
+                        | "They"
+                        | "You"
+                        | "Wait"
+                        | "Please"
+                        | "Don't"
+                        | "Doesn't"
+                        | "Isn't"
                 ) {
                     terms.insert(word);
                 }
@@ -3426,7 +3465,9 @@ pub fn select_background_pairs(source_text: &str, history: &[ContextPair]) -> Ve
         .filter_map(|(idx, pair)| {
             pair.translation
                 .as_deref()
-                .filter(|t| !t.trim().is_empty() && !is_polluted_history_translation(&pair.source, t))
+                .filter(|t| {
+                    !t.trim().is_empty() && !is_polluted_history_translation(&pair.source, t)
+                })
                 .map(|_| idx)
         })
         .collect();
@@ -3487,7 +3528,9 @@ pub fn select_background_pairs(source_text: &str, history: &[ContextPair]) -> Ve
         let prev_chars = history[idx].source.trim().chars().count();
         if !cur_is_dlg
             && (cur_chars > 90 || prev_chars > 120)
-            && !current_terms.iter().any(|term| history[idx].source.contains(term))
+            && !current_terms
+                .iter()
+                .any(|term| history[idx].source.contains(term))
         {
             continue;
         }
@@ -3520,18 +3563,29 @@ pub fn select_background_pairs(source_text: &str, history: &[ContextPair]) -> Ve
 
 fn hy_mt2_style_tag(style: &str, source_text: &str, is_dialogue: bool) -> Option<&'static str> {
     match style.trim() {
-        "literal" => Some("faithful literal translation preserving original meaning and sentence structure"),
+        "literal" => {
+            Some("faithful literal translation preserving original meaning and sentence structure")
+        }
         "auto:casual" => is_dialogue.then_some("natural casual dialogue"),
-        "novel" | "auto:novel" => is_dialogue.then(|| match crate::ai::detect_dialogue_register(source_text) {
-            crate::ai::DialogueRegister::Polite => "natural polite colloquial dialogue preserving respectful tone",
-            crate::ai::DialogueRegister::Casual => "natural casual informal colloquial dialogue",
-            crate::ai::DialogueRegister::Neutral => "natural colloquial dialogue",
-        }),
+        "novel" | "auto:novel" => {
+            is_dialogue.then(|| match crate::ai::detect_dialogue_register(source_text) {
+                crate::ai::DialogueRegister::Polite => {
+                    "natural polite colloquial dialogue preserving respectful tone"
+                }
+                crate::ai::DialogueRegister::Casual => {
+                    "natural casual informal colloquial dialogue"
+                }
+                crate::ai::DialogueRegister::Neutral => "natural colloquial dialogue",
+            })
+        }
         _ => is_dialogue.then_some("natural colloquial dialogue"),
     }
 }
 
-fn builtin_ja_ko_novel_hints(source_text: &str, target_lang: &str) -> Vec<(&'static str, &'static str)> {
+fn builtin_ja_ko_novel_hints(
+    source_text: &str,
+    target_lang: &str,
+) -> Vec<(&'static str, &'static str)> {
     if !target_lang.eq_ignore_ascii_case("Korean") {
         return Vec::new();
     }
@@ -3579,7 +3633,9 @@ pub fn format_instruct_prompt_pair(
                     if lang == "Korean" {
                         "Translate as polite Korean dialogue ending in ~요/~네요/~습니다 (해요체/하십시오체).".to_string()
                     } else {
-                        format!("Translate as polite dialogue preserving respectful register into {lang}.")
+                        format!(
+                            "Translate as polite dialogue preserving respectful register into {lang}."
+                        )
                     }
                 }
                 crate::ai::DialogueRegister::Casual => {
@@ -3651,7 +3707,14 @@ pub fn format_single_prompt(
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
 ) -> String {
-    format_single_prompt_ext(source_text, target_language, style, glossary, history, false)
+    format_single_prompt_ext(
+        source_text,
+        target_language,
+        style,
+        glossary,
+        history,
+        false,
+    )
 }
 
 pub fn format_single_prompt_ext(
@@ -3669,8 +3732,8 @@ pub fn format_single_prompt_ext(
     let style_clause = hy_mt2_style_tag(style, source_text, is_dialogue)
         .map(|tag| format!(" Style: [{tag}]."))
         .unwrap_or_default();
-    let is_zh_pair =
-        matches!(lang.as_str(), "Chinese" | "Traditional Chinese") || source_is_chinese(source_text);
+    let is_zh_pair = matches!(lang.as_str(), "Chinese" | "Traditional Chinese")
+        || source_is_chinese(source_text);
     let use_zh_template = is_zh_pair && style_clause.is_empty();
 
     let builtin_hints = builtin_ja_ko_novel_hints(source_text, &lang);
@@ -3719,7 +3782,8 @@ pub fn format_single_prompt_ext(
         ));
     }
 
-    let has_markers = !omit_marker_clause && source_text.contains("[[") && source_text.contains("]]");
+    let has_markers =
+        !omit_marker_clause && source_text.contains("[[") && source_text.contains("]]");
     let has_link_markers = has_markers && source_text.contains('|');
     let has_img_markers = !omit_marker_clause && source_text.contains("[[img");
 
@@ -3987,17 +4051,32 @@ pub fn preprocess_source_text(source_text: &str, target_language: &str, _style: 
             .replace("今日は上がり？", "今日はもう仕事終わり？")
             .replace("前のお礼に、奢らせて", "前のお礼に、私がご馳走するよ")
             .replace("冒険者御用達の中規模な店", "冒険者たちがよく通う中規模な店")
-            .replace("冒険者御用達とは言っても", "冒険者たちがよく通う店とは言っても")
-            .replace("かなり奮発しないといけない", "かなり思い切ってお金を使わないといけない")
+            .replace(
+                "冒険者御用達とは言っても",
+                "冒険者たちがよく通う店とは言っても",
+            )
+            .replace(
+                "かなり奮発しないといけない",
+                "かなり思い切ってお金を使わないといけない",
+            )
             .replace("冷もとれるし", "涼しく冷やせるし")
-            .replace("ばきりとヒビを入れて返してやる", "ばきりと殻にヒビを入れて返してやる")
+            .replace(
+                "ばきりとヒビを入れて返してやる",
+                "ばきりと殻にヒビを入れて返してやる",
+            )
             .replace("縦に長い瞳孔", "縦方向に細長い瞳孔")
-            .replace("仲間の知り合いが開いてるお店", "仲間の知人が経営しているお店")
+            .replace(
+                "仲間の知り合いが開いてるお店",
+                "仲間の知人が経営しているお店",
+            )
             .replace("ジグには不要かな……", "ジグには必要ないだろうな……")
             .replace("ジグには不要かな", "ジグには必要ないだろうな")
             .replace("不要かな……", "必要ないだろうな……")
             .replace("不要かな。", "必要ないだろうな。")
-            .replace("別に信者ってわけじゃなくても", "特に信徒ではない人であっても")
+            .replace(
+                "別に信者ってわけじゃなくても",
+                "特に信徒ではない人であっても",
+            )
             .replace("信者ってわけじゃなくても", "信徒ではない人であっても")
             .replace("ってわけじゃなくても", "というわけではない人であっても")
             .replace("ぷっと吹き出", "フッと笑いを漏ら")
@@ -4016,7 +4095,10 @@ pub fn preprocess_source_text(source_text: &str, target_language: &str, _style: 
                 "what encounter of enemies will be fought",
                 "which enemy encounter group will be fought in battle",
             )
-            .replace("Sets who is in your ", "Sets which character is placed in the ")
+            .replace(
+                "Sets who is in your ",
+                "Sets which character is placed in the ",
+            )
             .replace("party slot.", "party member slot.")
             .replace(
                 "talking to shadows through holdup",
@@ -4027,7 +4109,10 @@ pub fn preprocess_source_text(source_text: &str, target_language: &str, _style: 
                 "talking to Shadows during a Hold Up",
             )
             .replace("Sets the major of ", "Sets the major ID for ")
-            .replace("what part of battle you're in", "which battle state you are in")
+            .replace(
+                "what part of battle you're in",
+                "which battle state you are in",
+            )
             .replace(
                 "fires pellets in a cone pattern",
                 "fires shotgun pellets in a cone-shaped spread",
@@ -4154,9 +4239,9 @@ pub fn strip_echoed_history_translations(raw: &str, history: &[ContextPair]) -> 
             }
             let l_chars = line.chars().count();
             if l_chars >= 18
-                && recent_tgts
-                    .iter()
-                    .any(|prev| prev == line || prev.contains(line) || line.starts_with(prev.as_str()))
+                && recent_tgts.iter().any(|prev| {
+                    prev == line || prev.contains(line) || line.starts_with(prev.as_str())
+                })
             {
                 return false;
             }
@@ -4178,10 +4263,7 @@ pub fn strip_echoed_history_translations(raw: &str, history: &[ContextPair]) -> 
             // Also check individual sentences from `prev` (>= 20 chars)
             for sent in prev.split_inclusive(['.', '!', '?', '…']) {
                 let st = sent.trim();
-                if st.chars().count() >= 20
-                    && s.starts_with(st)
-                    && s.len() > st.len() + 6
-                {
+                if st.chars().count() >= 20 && s.starts_with(st) && s.len() > st.len() + 6 {
                     s = s[st.len()..].trim().to_string();
                     stripped = true;
                     break;
@@ -4221,7 +4303,9 @@ fn replace_korean_copula_imnida(text: &str) -> String {
         let prefix = &rest[..pos];
         let after = &rest[pos + "입니다".len()..];
         let is_sentence_boundary = after.is_empty()
-            || after.starts_with(['.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n']);
+            || after.starts_with([
+                '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
+            ]);
         let trimmed_prefix = prefix.trim_end_matches(['’', '”', '"', '\'', ')', '』', '」']);
         let mut prev_char = trimmed_prefix.chars().last();
         if prev_char == Some(']')
@@ -4406,7 +4490,9 @@ pub fn normalize_korean_narration_endings(out: &mut String) {
             let prefix = &rest[..pos];
             let after = &rest[pos + "습니다".len()..];
             let boundary = after.is_empty()
-                || after.starts_with(['.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n']);
+                || after.starts_with([
+                    '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
+                ]);
             fixed.push_str(prefix);
             if boundary && prefix.chars().last().is_some_and(has_korean_ss_batchim) {
                 fixed.push('다');
@@ -4430,7 +4516,9 @@ pub fn normalize_korean_narration_endings(out: &mut String) {
             let prefix = &rest[..pos];
             let after = &rest[pos + "됩니다".len()..];
             let boundary = after.is_empty()
-                || after.starts_with(['.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n']);
+                || after.starts_with([
+                    '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
+                ]);
             fixed.push_str(prefix);
             if boundary {
                 fixed.push_str("된다");
@@ -4545,7 +4633,8 @@ pub fn repair_inline_markers(source_text: &str, out: &mut String) {
     // 2. Repair malformed single-bracket closers (`[[1|...]`, `[[5|...]()]`) and triple-bracket footnotes (`[[0|[4]]]` -> `[[0|[4]]`)
     for &id in &expected_ids {
         let prefix = format!("[[{id}|");
-        let is_footnote_src = source_text.contains(&format!("[[{id}|[")) && source_text.contains("]]]");
+        let is_footnote_src =
+            source_text.contains(&format!("[[{id}|[")) && source_text.contains("]]]");
         let mut search_from = 0usize;
         while let Some(rel_pos) = out[search_from..].find(&prefix) {
             let abs_start = search_from + rel_pos;
@@ -4577,11 +4666,9 @@ pub fn repair_inline_markers(source_text: &str, out: &mut String) {
                     out.replace_range(inner_end..inner_end + 1, "]]");
                 }
                 search_from = inner_end + 2;
-            } else if let Some((rel_pos, cjk_ch)) =
-                slice.char_indices().find(|&(_, ch)| {
-                    (ch == '》' && !slice.contains('《')) || (ch == '】' && !slice.contains('【'))
-                })
-            {
+            } else if let Some((rel_pos, cjk_ch)) = slice.char_indices().find(|&(_, ch)| {
+                (ch == '》' && !slice.contains('《')) || (ch == '】' && !slice.contains('【'))
+            }) {
                 let inner_end = content_start + rel_pos;
                 out.replace_range(inner_end..inner_end + cjk_ch.len_utf8(), "]]");
                 search_from = inner_end + 2;
@@ -4923,7 +5010,10 @@ pub fn postprocess_translation_output(
         }
         if out.contains("ような") && !source_text.contains("ような") {
             out = out.replace("ような", "");
-        } else if out.ends_with("ような?”") || out.ends_with("ような?」") || out.ends_with("ような?”") {
+        } else if out.ends_with("ような?”")
+            || out.ends_with("ような?」")
+            || out.ends_with("ような?”")
+        {
             out = out.replace("ような", "것 같기도 하고");
         }
         if out.contains("갈라놓았던착암룡") {
@@ -4965,7 +5055,10 @@ pub fn postprocess_translation_output(
             out = out.replace("청인교", "징인교");
         }
         for (bad_guest, good_guest) in [
-            ("천천히 천천히 천천히 나중에 들어온 손님", "나중에 들어온 손님"),
+            (
+                "천천히 천천히 천천히 나중에 들어온 손님",
+                "나중에 들어온 손님",
+            ),
             ("천천히 나중에 들어온 손님", "나중에 들어온 손님"),
             ("뒤에서 들어온 손님", "나중에 들어온 손님"),
             ("뒤에서 들어오던 손님", "나중에 들어오던 손님"),
@@ -5035,7 +5128,8 @@ pub fn postprocess_translation_output(
                 }
             }
         }
-        if source_text.contains("不要かな") || source_text.contains("必要ないだろうな") {
+        if source_text.contains("不要かな") || source_text.contains("必要ないだろうな")
+        {
             for (bad_musing, good_musing) in [
                 ("지그에게는 필요 없을 거야……", "지그는 필요 없겠지……"),
                 ("지그에게는 필요 없을 거야...", "지그는 필요 없겠지..."),
@@ -5057,19 +5151,33 @@ pub fn postprocess_translation_output(
                 }
             }
         }
-        if source_text.contains("信者ってわけじゃなくても") || source_text.contains("信徒ではない人であっても") {
+        if source_text.contains("信者ってわけじゃなくても")
+            || source_text.contains("信徒ではない人であっても")
+        {
             for (bad_believer, good_believer) in [
                 ("굳이 신자로 되는건 아니지만", "딱히 신도가 아닌 사람이라도"),
-                ("굳이 신자로 되는 건 아니지만", "딱히 신도가 아닌 사람이라도"),
-                ("굳이 신자가 되는 건 아니지만", "딱히 신도가 아닌 사람이라도"),
+                (
+                    "굳이 신자로 되는 건 아니지만",
+                    "딱히 신도가 아닌 사람이라도",
+                ),
+                (
+                    "굳이 신자가 되는 건 아니지만",
+                    "딱히 신도가 아닌 사람이라도",
+                ),
                 ("굳이 신자가 아니더라도", "딱히 신도가 아닌 사람이라도"),
                 ("별로 신자라는 건 아니지만", "딱히 신도가 아닌 사람이라도"),
                 ("딱히 신자라는 건 아니지만", "딱히 신도가 아닌 사람이라도"),
                 ("딱히 신자는 아니지만", "딱히 신도가 아닌 사람이라도"),
-                ("특히 신도가 아닌 사람들 사이에서도", "딱히 신도가 아닌 사람이라도,"),
+                (
+                    "특히 신도가 아닌 사람들 사이에서도",
+                    "딱히 신도가 아닌 사람이라도,",
+                ),
                 ("특히 신도가 아닌 사람들도", "딱히 신도가 아닌 사람이라도,"),
                 ("특히 신도가 아닌 사람이라도", "딱히 신도가 아닌 사람이라도"),
-                ("특별히 신도가 아닌 사람이라도", "딱히 신도가 아닌 사람이라도"),
+                (
+                    "특별히 신도가 아닌 사람이라도",
+                    "딱히 신도가 아닌 사람이라도",
+                ),
             ] {
                 if out.contains(bad_believer) {
                     out = out.replace(bad_believer, good_believer);
@@ -5106,7 +5214,10 @@ pub fn postprocess_translation_output(
 
         let is_dialogue = is_dialogue_segment(source_text);
         if !is_dialogue {
-            if !source_text.contains('俺') && !source_text.contains('私') && !source_text.contains('僕') {
+            if !source_text.contains('俺')
+                && !source_text.contains('私')
+                && !source_text.contains('僕')
+            {
                 for (bad_first_person, clean_phrase) in [
                     ("내가 주문한", "주문해 둔"),
                     ("내가 요청했던", "주문해 둔"),
@@ -5145,7 +5256,10 @@ pub fn postprocess_translation_output(
 
         // TCRF & Namuwiki (JA/EN -> KO) domain post-corrections
         if src_lower.contains("title screen") {
-            if out.contains("제목화면") || out.contains("제목 화면") || out.contains("타이틀 스크린") {
+            if out.contains("제목화면")
+                || out.contains("제목 화면")
+                || out.contains("타이틀 스크린")
+            {
                 out = out
                     .replace("제목화면", "타이틀 화면")
                     .replace("제목 화면", "타이틀 화면")
@@ -5180,7 +5294,10 @@ pub fn postprocess_translation_output(
                 ("적군 그룹과 싸울지", "적 그룹(인카운트)과 싸울지"),
                 ("싸울 적 인카운트 그룹을", "전투할 적 그룹(인카운트)을"),
                 ("전투할 적 인카운트 그룹을", "전투할 적 그룹(인카운트)을"),
-                ("전투에서 싸울 적 인카운트 그룹을", "전투할 적 그룹(인카운트)을"),
+                (
+                    "전투에서 싸울 적 인카운트 그룹을",
+                    "전투할 적 그룹(인카운트)을",
+                ),
                 ("전투에서 싸울 적 그룹을", "전투할 적 그룹(인카운트)을"),
             ] {
                 if out.contains(bad_enc) {
@@ -5301,7 +5418,9 @@ pub fn postprocess_translation_output(
         }
 
         // Namuwiki JA/EN -> KO exact-context machine-retranslation fixes
-        if source_text.contains("文書をご注意ください") || source_text.contains("文書をご参照ください") {
+        if source_text.contains("文書をご注意ください")
+            || source_text.contains("文書をご参照ください")
+        {
             for (bad_doc, good_doc) in [
                 ("문서를 주의하십시오", "문서를 참고하십시오"),
                 ("문서를 주의하세요", "문서를 참고하십시오"),
@@ -5340,7 +5459,8 @@ pub fn postprocess_translation_output(
         if source_text.contains("ラストバイブル") && out.contains("마지막 책") {
             out = out.replace("마지막 책", "라스트 바이블");
         }
-        if src_lower.contains("goddess lee munrok") || source_text.contains("女神イ・ムンロク") {
+        if src_lower.contains("goddess lee munrok") || source_text.contains("女神イ・ムンロク")
+        {
             for (bad_lm, good_lm) in [
                 ("여신 이문로크의 페르소나", "여신이문록 페르소나"),
                 ("여신 이문록의 페르소나", "여신이문록 페르소나"),
@@ -5394,7 +5514,8 @@ pub fn postprocess_translation_output(
                 .replace("게임 오브 더 이어즈", "올해의 게임")
                 .replace("게임 오브 더 이어", "올해의 게임");
         }
-        if out.contains("1인칭 슈팅 게임]] 게임") || out.contains("1인칭 슈팅 게임 게임") {
+        if out.contains("1인칭 슈팅 게임]] 게임") || out.contains("1인칭 슈팅 게임 게임")
+        {
             out = out
                 .replace("1인칭 슈팅 게임]] 게임", "1인칭 슈팅 게임]]")
                 .replace("1인칭 슈팅 게임 게임", "1인칭 슈팅 게임");
@@ -5403,9 +5524,7 @@ pub fn postprocess_translation_output(
             && src_lower.contains("shooter")
             && (out.contains("과학소설") || out.contains("과학 소설"))
         {
-            out = out
-                .replace("과학소설", "SF")
-                .replace("과학 소설", "SF");
+            out = out.replace("과학소설", "SF").replace("과학 소설", "SF");
         }
         if src_lower.contains("single-player") && out.contains("Single-player]]") {
             out = out.replace("Single-player]]", "싱글플레이어]]");
@@ -5506,7 +5625,10 @@ fn strip_hallucinated_marker_urls(source_text: &str, out: &mut String) {
             let rel_end = rest[scan_from..]
                 .find(|c: char| {
                     c.is_whitespace()
-                        || matches!(c, ')' | ']' | '」' | '』' | '"' | '\'' | '’' | '”' | '<' | '>')
+                        || matches!(
+                            c,
+                            ')' | ']' | '」' | '』' | '"' | '\'' | '’' | '”' | '<' | '>'
+                        )
                         || !c.is_ascii()
                 })
                 .map(|i| scan_from + i)
@@ -5721,10 +5843,7 @@ fn is_known_amd_apu_name(gpu_lower: &str) -> bool {
 }
 
 fn is_known_intel_igpu_name(gpu_lower: &str) -> bool {
-    if gpu_lower.contains("arc a")
-        || gpu_lower.contains("arc b")
-        || gpu_lower.contains("arc pro")
-    {
+    if gpu_lower.contains("arc a") || gpu_lower.contains("arc b") || gpu_lower.contains("arc pro") {
         return false;
     }
     gpu_lower.contains("uhd")
@@ -5861,14 +5980,24 @@ fn match_dxgi_adapter_for_gpu<'a>(
             && let Some(by_vendor) = adapters
                 .iter()
                 .filter(|a| detect_gpu_vendor(&a.name, Some(a.vendor_id)) == selected_vendor)
-                .max_by_key(|a| (is_discrete_dxgi_adapter(a), a.dedicated_vram_mb, a.shared_vram_mb))
+                .max_by_key(|a| {
+                    (
+                        is_discrete_dxgi_adapter(a),
+                        a.dedicated_vram_mb,
+                        a.shared_vram_mb,
+                    )
+                })
         {
             return Some(by_vendor);
         }
     }
-    adapters
-        .iter()
-        .max_by_key(|a| (is_discrete_dxgi_adapter(a), a.dedicated_vram_mb, a.shared_vram_mb))
+    adapters.iter().max_by_key(|a| {
+        (
+            is_discrete_dxgi_adapter(a),
+            a.dedicated_vram_mb,
+            a.shared_vram_mb,
+        )
+    })
 }
 
 pub fn resolve_optimal_gpu_layers(
@@ -5937,7 +6066,9 @@ pub fn resolve_optimal_gpu_layers(
             .clamp(8, estimated_total_layers - 1) as u32;
         return (
             optimal_layers,
-            format!("{proto}+cpu({vendor_tag}-hybrid ngl={optimal_layers}/{estimated_total_layers})"),
+            format!(
+                "{proto}+cpu({vendor_tag}-hybrid ngl={optimal_layers}/{estimated_total_layers})"
+            ),
         );
     }
 
@@ -6050,7 +6181,9 @@ pub fn recommend_hardware_tier_ext(
         return (
             "7b-q4_k_m",
             HY_MT2_HIGH_SPEC_MODEL_ID,
-            format!("고성능 {vendor_label} GPU 감지(전용 VRAM {dedicated_vram_mb} MiB) → Hy-MT2-7B Q4_K_M 권장"),
+            format!(
+                "고성능 {vendor_label} GPU 감지(전용 VRAM {dedicated_vram_mb} MiB) → Hy-MT2-7B Q4_K_M 권장"
+            ),
         );
     }
     if (is_discrete_gpu || gpu_vendor == "nvidia") && dedicated_vram_mb >= 3_800 {
@@ -6095,13 +6228,17 @@ pub fn recommend_hardware_tier(
         (
             "1.8b-1.25bit",
             HY_MT2_LIGHT_MODEL_ID,
-            format!("저용량 메모리({total_ram_mb} MiB RAM) → 경량 모델(1.8B 초경량) 또는 클라우드 API 병행 권장"),
+            format!(
+                "저용량 메모리({total_ram_mb} MiB RAM) → 경량 모델(1.8B 초경량) 또는 클라우드 API 병행 권장"
+            ),
         )
     } else {
         (
             "api-fallback",
             DEFAULT_HY_MT2_MODEL_ID,
-            format!("시스템 메모리({total_ram_mb} MiB RAM)가 부족하여 클라우드 API 폴백을 권장합니다"),
+            format!(
+                "시스템 메모리({total_ram_mb} MiB RAM)가 부족하여 클라우드 API 폴백을 권장합니다"
+            ),
         )
     }
 }
@@ -6166,9 +6303,9 @@ fn now_epoch_ms() -> u64 {
 
 #[cfg(target_os = "windows")]
 fn is_vulkan_loader_present() -> bool {
-    use windows::core::w;
     use windows::Win32::Foundation::FreeLibrary;
     use windows::Win32::System::LibraryLoader::LoadLibraryW;
+    use windows::core::w;
     match unsafe { LoadLibraryW(w!("vulkan-1.dll")) } {
         Ok(module) if !module.is_invalid() => {
             let _ = unsafe { FreeLibrary(module) };
@@ -6244,7 +6381,7 @@ fn query_system_memory_mb() -> (u64, u64) {
 #[cfg(target_os = "windows")]
 fn query_dxgi_adapters() -> Vec<DxgiAdapterInfo> {
     use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
+        CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIFactory1,
     };
     let Ok(factory) = (unsafe { CreateDXGIFactory1::<IDXGIFactory1>() }) else {
         return Vec::new();
@@ -6302,7 +6439,10 @@ fn read_hklm_reg_sz(subkey: &str, value_name: &str) -> Option<String> {
     const HKEY_LOCAL_MACHINE: isize = -2147483646i32 as isize;
     const RRF_RT_REG_SZ: u32 = 0x0000_0002;
     let subkey_w: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
-    let val_w: Vec<u16> = value_name.encode_utf16().chain(std::iter::once(0)).collect();
+    let val_w: Vec<u16> = value_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
     let mut buf = [0u16; 256];
     let mut bytes = (buf.len() * 2) as u32;
     let status = unsafe {
@@ -6396,8 +6536,12 @@ mod tests {
         assert!(is_dialogue_segment("『……本当に大丈夫なのか？』"));
         assert!(is_dialogue_segment("\"Don't tell me you're going alone.\""));
         assert!(is_dialogue_segment("（そういう事か）"));
-        assert!(!is_dialogue_segment("エルシアは星詠の聖剣を握りしめ、静かに息を吐いた。"));
-        assert!(!is_dialogue_segment("Kael sheathed the Astral Blade and looked back."));
+        assert!(!is_dialogue_segment(
+            "エルシアは星詠の聖剣を握りしめ、静かに息を吐いた。"
+        ));
+        assert!(!is_dialogue_segment(
+            "Kael sheathed the Astral Blade and looked back."
+        ));
         assert!(!is_dialogue_segment("(The Orange Box)"));
         assert!(!is_dialogue_segment("(abbreviated as HL2)"));
     }
@@ -6420,8 +6564,11 @@ mod tests {
         assert!(non_translatable_shortcut("[[img0]] Half-Life 2").is_none());
 
         // 2. repair_inline_markers restores corrupted map/entity code names while keeping footnotes intact
-        let src = "Excerpts ([[0|d1_trainstation_01]]) load [[1|d1_town_02a]] via trigger.[[2|[1]]]";
-        let mut out = "발췌본 ([[0|d1_기차역_01]])은 트리거를 통해 [[1|d1_town_02]]을 불러온다.[[2|[1]]".to_string();
+        let src =
+            "Excerpts ([[0|d1_trainstation_01]]) load [[1|d1_town_02a]] via trigger.[[2|[1]]]";
+        let mut out =
+            "발췌본 ([[0|d1_기차역_01]])은 트리거를 통해 [[1|d1_town_02]]을 불러온다.[[2|[1]]"
+                .to_string();
         repair_inline_markers(src, &mut out);
         assert_eq!(
             out,
@@ -6455,7 +6602,8 @@ mod tests {
             "Freeman battles the [[4|Combine]] while allies are shocked to see him alive.",
             "한국어",
             "natural",
-            "프리먼은 [[4|컴바인드]]에 맞서 싸우고 동료들은 그가 살아 있는 것을 보고 놀랍니다.".into(),
+            "프리먼은 [[4|컴바인드]]에 맞서 싸우고 동료들은 그가 살아 있는 것을 보고 놀랍니다."
+                .into(),
         );
         assert_eq!(
             combine_out,
@@ -6496,7 +6644,8 @@ mod tests {
                 "Freeman battles the [[4|Combine]] and this article has yet to be cleaned up.",
                 "한국어",
                 "natural",
-                "프리먼은 [[4|콤비네이트]]라는 종족과 싸우며 이 글은 아직 정리되어 있지 않습니다.".into(),
+                "프리먼은 [[4|콤비네이트]]라는 종족과 싸우며 이 글은 아직 정리되어 있지 않습니다."
+                    .into(),
             ),
             "프리먼은 [[4|콤바인]]이라는 종족과 싸우며 이 글은 아직 정리되어 있지 않다."
         );
@@ -6519,11 +6668,15 @@ mod tests {
             "Unexpected split chunk count: {split_chunks:?}"
         );
         assert!(
-            split_chunks.iter().any(|c| c.contains("filtering.[[3|[1]]]")),
+            split_chunks
+                .iter()
+                .any(|c| c.contains("filtering.[[3|[1]]]")),
             "Footnote [[3|[1]]] must stay attached to its ending sentence: {split_chunks:?}"
         );
         assert!(
-            !split_chunks.iter().any(|c| c.ends_with("e.g.") || c.ends_with("U.S.") || c.ends_with("1.")),
+            !split_chunks
+                .iter()
+                .any(|c| c.ends_with("e.g.") || c.ends_with("U.S.") || c.ends_with("1.")),
             "Abbreviations and decimals must not trigger splits: {split_chunks:?}"
         );
 
@@ -6547,10 +6700,7 @@ mod tests {
             "“죄송합니다, 카인 님”"
         );
         assert_eq!(
-            preserve_outer_dialogue_quotes(
-                "「先輩、行きます！」",
-                "“선배, 갑니다!”".into()
-            ),
+            preserve_outer_dialogue_quotes("「先輩、行きます！」", "“선배, 갑니다!”".into()),
             "“선배, 갑니다!”"
         );
         assert_eq!(
@@ -6588,7 +6738,8 @@ mod tests {
         ];
         let bg = select_background_pairs("「先輩、結界の修復が完了しました！」", &history);
         assert!(
-            bg.iter().any(|line| line.contains("アルカディア帝国の結界") && line.contains("알카디아 제국의 결계")),
+            bg.iter().any(|line| line.contains("アルカディア帝国の結界")
+                && line.contains("알카디아 제국의 결계")),
             "Early anchor containing 結界 must be kept in background: {bg:?}"
         );
         assert!(
@@ -6616,34 +6767,29 @@ mod tests {
         );
         assert!(prompt.contains("\"Hy-MT2\" translates to \"Hy-MT2\""));
         assert!(prompt.contains("preserving [[0|...]] and [[img0]] markers intact"));
-        assert!(prompt.starts_with("Reference the following translations:\n") || prompt.contains("Translate the following segment into Korean, without additional explanation."));
-
-        let literal_prompt = format_single_prompt(
-            "Download Hy-MT2 today.",
-            "한국어",
-            "literal",
-            &[],
-            &[],
+        assert!(
+            prompt.starts_with("Reference the following translations:\n")
+                || prompt.contains(
+                    "Translate the following segment into Korean, without additional explanation."
+                )
         );
+
+        let literal_prompt =
+            format_single_prompt("Download Hy-MT2 today.", "한국어", "literal", &[], &[]);
         assert!(literal_prompt.contains("faithful literal translation"));
 
-        let zh_prompt = format_single_prompt(
-            "Hello world",
-            "中文(简体)",
-            "natural",
-            &[],
-            &[],
+        let zh_prompt = format_single_prompt("Hello world", "中文(简体)", "natural", &[], &[]);
+        assert_eq!(
+            normalize_target_language_for_hy_mt2("中文(简体)"),
+            "Chinese"
         );
-        assert_eq!(normalize_target_language_for_hy_mt2("中文(简体)"), "Chinese");
-        assert!(zh_prompt.contains("将以下文本翻译为中文"), "Unexpected ZH prompt: {zh_prompt}");
+        assert!(
+            zh_prompt.contains("将以下文本翻译为中文"),
+            "Unexpected ZH prompt: {zh_prompt}"
+        );
 
-        let dialogue_prompt = format_single_prompt(
-            "「本当に大丈夫なの？」",
-            "한국어",
-            "natural",
-            &[],
-            &[],
-        );
+        let dialogue_prompt =
+            format_single_prompt("「本当に大丈夫なの？」", "한국어", "natural", &[], &[]);
         assert!(dialogue_prompt.contains("[natural colloquial dialogue]"));
 
         let polite_novel = format_single_prompt(
@@ -6677,7 +6823,10 @@ mod tests {
     #[test]
     fn multilingual_target_scoping_and_namuwiki_rules_work() {
         // 1. Target-language preset normalization across European & Asian scripts
-        assert_eq!(normalize_target_language_for_hy_mt2("中文(繁體)"), "Traditional Chinese");
+        assert_eq!(
+            normalize_target_language_for_hy_mt2("中文(繁體)"),
+            "Traditional Chinese"
+        );
         assert_eq!(normalize_target_language_for_hy_mt2("Español"), "Spanish");
         assert_eq!(normalize_target_language_for_hy_mt2("Français"), "French");
         assert_eq!(normalize_target_language_for_hy_mt2("Deutsch"), "German");
@@ -6724,10 +6873,19 @@ mod tests {
         );
 
         // 4. Script-unique target-language shortcut checks
-        assert!(already_in_target_language_shortcut("페르소나 3는 2006년 출시된 RPG다.", "한국어").is_some());
-        assert!(already_in_target_language_shortcut("이 게임은 [[0|Persona 3]]이다.", "한국어").is_none());
+        assert!(
+            already_in_target_language_shortcut("페르소나 3는 2006년 출시된 RPG다.", "한국어")
+                .is_some()
+        );
+        assert!(
+            already_in_target_language_shortcut("이 게임은 [[0|Persona 3]]이다.", "한국어")
+                .is_none()
+        );
         assert!(already_in_target_language_shortcut("このゲームはRPGです。", "日本語").is_some());
-        assert!(already_in_target_language_shortcut("C'est un jeu RPG très célèbre.", "English").is_none());
+        assert!(
+            already_in_target_language_shortcut("C'est un jeu RPG très célèbre.", "English")
+                .is_none()
+        );
 
         // 5. Namuwiki JA/EN -> KO exact-context fixes
         assert_eq!(
@@ -6744,19 +6902,39 @@ mod tests {
             "1. 개요"
         );
         assert_eq!(
-            postprocess_translation_output("4. characteristic", "한국어", "natural", "4. 특성".into()),
+            postprocess_translation_output(
+                "4. characteristic",
+                "한국어",
+                "natural",
+                "4. 특성".into()
+            ),
             "4. 특징"
         );
         assert_eq!(
-            postprocess_translation_output("6. extended edition", "한국어", "natural", "6. 연장판".into()),
+            postprocess_translation_output(
+                "6. extended edition",
+                "한국어",
+                "natural",
+                "6. 연장판".into()
+            ),
             "6. 확장판"
         );
         assert_eq!(
-            postprocess_translation_output("11. Koreanization", "한국어", "natural", "11. 한국화".into()),
+            postprocess_translation_output(
+                "11. Koreanization",
+                "한국어",
+                "natural",
+                "11. 한국화".into()
+            ),
             "11. 한국어화"
         );
         assert_eq!(
-            postprocess_translation_output("circulation ATLUS SCEK", "한국어", "natural", "순환 ATLUS SCEK".into()),
+            postprocess_translation_output(
+                "circulation ATLUS SCEK",
+                "한국어",
+                "natural",
+                "순환 ATLUS SCEK".into()
+            ),
             "유통 ATLUS SCEK"
         );
         assert_eq!(
@@ -6847,7 +7025,10 @@ mod tests {
             "natural",
             "Party2 - 3번째 파티 슬롯에 포함된 인원을 설정한다.".into(),
         );
-        assert_eq!(party, "Party2 - 3번째 파티 슬롯에 배치할 캐릭터를 설정한다.");
+        assert_eq!(
+            party,
+            "Party2 - 3번째 파티 슬롯에 배치할 캐릭터를 설정한다."
+        );
 
         // 4. TALK MAJOR - Sets the major of talking to shadows through holdup.
         let talk_pre = preprocess_novel_source_text(
@@ -6866,10 +7047,22 @@ mod tests {
         );
 
         // 5. non_translatable_shortcut safety checks (skips numbers/URLs/IDs, never skips English prose/headings)
-        assert_eq!(non_translatable_shortcut("2026-11-19").as_deref(), Some("2026-11-19"));
-        assert_eq!(non_translatable_shortcut("[[img0]]").as_deref(), Some("[[img0]]"));
-        assert_eq!(non_translatable_shortcut("0x7F3A").as_deref(), Some("0x7F3A"));
-        assert_eq!(non_translatable_shortcut("PARTY_SLOT_1").as_deref(), Some("PARTY_SLOT_1"));
+        assert_eq!(
+            non_translatable_shortcut("2026-11-19").as_deref(),
+            Some("2026-11-19")
+        );
+        assert_eq!(
+            non_translatable_shortcut("[[img0]]").as_deref(),
+            Some("[[img0]]")
+        );
+        assert_eq!(
+            non_translatable_shortcut("0x7F3A").as_deref(),
+            Some("0x7F3A")
+        );
+        assert_eq!(
+            non_translatable_shortcut("PARTY_SLOT_1").as_deref(),
+            Some("PARTY_SLOT_1")
+        );
         assert_eq!(
             non_translatable_shortcut("https://tcrf.net/Proto:Persona_3").as_deref(),
             Some("https://tcrf.net/Proto:Persona_3")
@@ -6919,7 +7112,10 @@ mod tests {
 
         // 7B (~4.41 GiB) exceeds 2048 MiB Dedicated UMA -> hybrid GPU+CPU split instead of WDDM thrashing!
         let (layers_7b, label_7b) = resolve_optimal_gpu_layers(&settings, &hw, 4_624_648_896);
-        assert!((8..=24).contains(&layers_7b), "Unexpected 7B hybrid layers: {layers_7b}");
+        assert!(
+            (8..=24).contains(&layers_7b),
+            "Unexpected 7B hybrid layers: {layers_7b}"
+        );
         assert!(label_7b.contains("amd-hybrid"));
 
         // Prompt echo sanitizer cleans 1.8B Q6_K [배경 정보] / [출처 텍스트] leaks
@@ -6967,12 +7163,10 @@ mod tests {
         );
 
         // 4. Cross-speaker register filter in select_background_pairs (3-person scene: Searsha polite -> Urbas casual)
-        let history = vec![
-            ContextPair {
-                source: "「三面鬼、それも群れですよ」".into(),
-                translation: Some("“삼면귀, 그것도 무리였어요.”".into()),
-            },
-        ];
+        let history = vec![ContextPair {
+            source: "「三面鬼、それも群れですよ」".into(),
+            translation: Some("“삼면귀, 그것도 무리였어요.”".into()),
+        }];
         let bg = select_background_pairs(
             "「猿狗が三面鬼連れてること、あるんだ。生息域全然違うのに……」",
             &history,
@@ -7345,7 +7539,10 @@ mod tests {
                     continue;
                 }
                 settings.model = candidate_model.to_string();
-                let _ = engine.test_model_load(&settings).await.expect("Load failed");
+                let _ = engine
+                    .test_model_load(&settings)
+                    .await
+                    .expect("Load failed");
                 let started = Instant::now();
                 let (res, _, _) = engine
                     .translate_segments(
@@ -7357,7 +7554,10 @@ mod tests {
                         true,
                         CancellationToken::new(),
                         |seg| {
-                            println!("WEB_SEG [{candidate_model}] {}: {}", seg.id, seg.translation);
+                            println!(
+                                "WEB_SEG [{candidate_model}] {}: {}",
+                                seg.id, seg.translation
+                            );
                         },
                     )
                     .await
@@ -7711,7 +7911,8 @@ mod tests {
             is_discrete: true,
             memory_total_mb: 8_188,
         });
-        let picked_cuda = select_best_ggml_gpu(&optimus_with_cuda).expect("must prefer CUDA over Vulkan");
+        let picked_cuda =
+            select_best_ggml_gpu(&optimus_with_cuda).expect("must prefer CUDA over Vulkan");
         assert_eq!(picked_cuda.index, 2);
 
         let rtx_4060_hw = HardwareProfile {
@@ -7778,7 +7979,8 @@ mod tests {
                 memory_total_mb: 8_188,
             },
         ];
-        let picked_dual = select_best_ggml_gpu(&dual_amd_nvidia).expect("must pick RTX 4070 over 780M");
+        let picked_dual =
+            select_best_ggml_gpu(&dual_amd_nvidia).expect("must pick RTX 4070 over 780M");
         assert_eq!(picked_dual.index, 1);
         assert_eq!(detect_gpu_vendor(&picked_dual.description, None), "nvidia");
 
@@ -7818,7 +8020,10 @@ mod tests {
             (8..33).contains(&gtx_7b_layers),
             "Unexpected 4GB GTX 1650 7B hybrid layers: {gtx_7b_layers}"
         );
-        assert!(gtx_7b_label.contains("nvidia-hybrid"), "label={gtx_7b_label}");
+        assert!(
+            gtx_7b_label.contains("nvidia-hybrid"),
+            "label={gtx_7b_label}"
+        );
         assert!(!gtx_7b_label.contains("amd-"), "label={gtx_7b_label}");
 
         // 4. Intel Core + Intel Iris Xe iGPU only (128 MiB DXGI dedicated + 8192 MiB shared)

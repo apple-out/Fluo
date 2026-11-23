@@ -362,7 +362,11 @@
       save.onclick = () => {
         const nextText = area.value;
         el.textContent = nextText;
-        const payload = { type: "edit", key, translation: nextText };
+        const origEl =
+          originals.get(key) ||
+          (key ? document.querySelector(`[data-rb-inline-key="${CSS.escape(key)}"]`) : null);
+        const source = (origEl?.innerText || origEl?.textContent || "").trim();
+        const payload = { type: "edit", key, source, translation: nextText };
         dispatchParaAction(payload);
         editorBox?.remove();
         editorBox = null;

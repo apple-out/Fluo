@@ -1170,7 +1170,11 @@ pub fn save_user_script(connection: &Connection, item: &UserScriptItem) -> Resul
             params![
                 item.id,
                 item.name.trim(),
-                if item.match_pattern.trim().is_empty() { "*" } else { item.match_pattern.trim() },
+                if item.match_pattern.trim().is_empty() {
+                    "*"
+                } else {
+                    item.match_pattern.trim()
+                },
                 item.code,
                 item.css,
                 item.enabled as i64,

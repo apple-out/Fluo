@@ -66,6 +66,8 @@ export const api = {
   navigate: (input: string) => invoke<BrowserState>("navigate", { input }),
   goBack: () => invoke<BrowserState>("go_back"),
   goForward: () => invoke<BrowserState>("go_forward"),
+  jumpHistoryDelta: (delta: number) => invoke<BrowserState>("jump_history_delta", { delta }),
+  activeTabHistory: () => invoke<[number, string[]]>("active_tab_history"),
   reload: () => invoke<BrowserState>("reload"),
   stopLoading: () => invoke<BrowserState>("stop_loading"),
   syncReadingPosition: () => invoke<void>("sync_reading_position"),
@@ -75,6 +77,7 @@ export const api = {
       | "adblock"
       | "site-security"
       | "bookmark-edit"
+      | "nav-history"
       | "translate"
       | "workspace"
       | "tab-menu"
