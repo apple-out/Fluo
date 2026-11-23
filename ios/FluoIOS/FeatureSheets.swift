@@ -1,3 +1,5 @@
+import CoreImage
+import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 
@@ -186,6 +188,19 @@ struct TranslateSheet: View {
                                 }
                             }
                         }
+
+                        Button {
+                            dismiss()
+                            store.summarizeActivePage()
+                        } label: {
+                            Label(t("tr.aiSummary"), systemImage: "sparkles.rectangle.stack.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(LiquidPressButtonStyle())
+                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true)
 
                         HStack(spacing: 10) {
                             Button {
@@ -648,8 +663,20 @@ struct MenuSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var copiedFeedback = false
+    @State private var showQRCode = false
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private func generateQRCode(from string: String) -> UIImage? {
+        let context = CIContext()
+        let filter = CIFilter.qrCodeGenerator()
+        filter.message = Data(string.utf8)
+        filter.correctionLevel = "M"
+        guard let outputImage = filter.outputImage else { return nil }
+        let transformed = outputImage.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+        guard let cgimg = context.createCGImage(transformed, from: transformed.extent) else { return nil }
+        return UIImage(cgImage: cgimg)
+    }
 
     var body: some View {
         NavigationStack {
@@ -750,6 +777,49 @@ struct MenuSheet: View {
                                 menuRow(t("menu.smartDark"), icon: "moon.stars") {
                                     store.toggleSmartDarkPage()
                                     dismiss()
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.readerMode"), icon: "doc.text.magnifyingglass") {
+                                    store.toggleReaderMode()
+                                    dismiss()
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.readingListAdd"), icon: "eyeglasses") {
+                                    store.addCurrentPageToReadingList()
+                                    copiedFeedback = true
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.printPdf"), icon: "printer") {
+                                    dismiss()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                        store.printCurrentPage()
+                                    }
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.qrCode"), icon: "qrcode") {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                        showQRCode.toggle()
+                                    }
+                                }
+                                if showQRCode, let qrImg = generateQRCode(from: BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)) {
+                                    VStack(spacing: 8) {
+                                        Image(uiImage: qrImg)
+                                            .interpolation(.none)
+                                            .resizable()
+                                            .scaledToFit()
+                                            .frame(width: 156, height: 156)
+                                            .padding(10)
+                                            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                        Text(store.currentHost)
+                                            .font(.caption2.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
                                 }
                                 Divider().opacity(0.25)
 

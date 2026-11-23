@@ -234,6 +234,11 @@ enum L10n {
             "tabs.deduplicate": "중복 탭 정리",
             "dl.search": "다운로드 파일 검색",
             "dl.clearAll": "전체 삭제",
+            "tr.aiSummary": "AI 페이지 핵심 요약",
+            "menu.readerMode": "집중 읽기 모드 (방해 요소 숨김)",
+            "menu.readingListAdd": "나중에 읽기에 추가",
+            "menu.printPdf": "프린트 / PDF 저장",
+            "menu.qrCode": "현재 페이지 QR 코드",
         ],
         .en: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -419,6 +424,11 @@ enum L10n {
             "tabs.deduplicate": "Close Duplicate Tabs",
             "dl.search": "Search downloads",
             "dl.clearAll": "Clear All",
+            "tr.aiSummary": "AI Page Summary (TL;DR)",
+            "menu.readerMode": "Distraction-Free Reader Mode",
+            "menu.readingListAdd": "Add to Reading List",
+            "menu.printPdf": "Print / Save as PDF",
+            "menu.qrCode": "Page QR Code",
         ],
         .ja: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -604,6 +614,11 @@ enum L10n {
             "tabs.deduplicate": "重複タブを整理",
             "dl.search": "ダウンロードを検索",
             "dl.clearAll": "すべて削除",
+            "tr.aiSummary": "AI ページ要点要約",
+            "menu.readerMode": "集中リーダーモード切替",
+            "menu.readingListAdd": "あとで読むに追加",
+            "menu.printPdf": "プリント / PDF保存",
+            "menu.qrCode": "このページのQRコード",
         ],
         .zhCN: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -789,6 +804,11 @@ enum L10n {
             "tabs.deduplicate": "清理重复标签页",
             "dl.search": "搜索下载文件",
             "dl.clearAll": "清空全部",
+            "tr.aiSummary": "AI 页面核心摘要",
+            "menu.readerMode": "沉浸阅读模式 (隐藏干扰)",
+            "menu.readingListAdd": "添加到稍后阅读",
+            "menu.printPdf": "打印 / 保存为 PDF",
+            "menu.qrCode": "当前页面二维码",
         ],
     ]
 }

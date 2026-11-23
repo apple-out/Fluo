@@ -1706,6 +1706,101 @@ final class BrowserStore: ObservableObject {
         userData.save()
     }
 
+    func toggleReaderMode() {
+        let js = """
+        (() => {
+          const root = document.documentElement;
+          if (!root) return;
+          const active = root.getAttribute("data-rb-reader-mode") === "1";
+          if (active) {
+            root.removeAttribute("data-rb-reader-mode");
+            document.getElementById("rb-reader-mode-style")?.remove();
+          } else {
+            root.setAttribute("data-rb-reader-mode", "1");
+            let st = document.getElementById("rb-reader-mode-style");
+            if (!st) {
+              st = document.createElement("style");
+              st.id = "rb-reader-mode-style";
+              root.appendChild(st);
+            }
+            st.textContent =
+              "html[data-rb-reader-mode='1'] aside,html[data-rb-reader-mode='1'] nav,html[data-rb-reader-mode='1'] footer,html[data-rb-reader-mode='1'] [role='navigation'],html[data-rb-reader-mode='1'] [role='complementary'],html[data-rb-reader-mode='1'] [class*='sidebar' i],html[data-rb-reader-mode='1'] [id*='sidebar' i],html[data-rb-reader-mode='1'] [class*='right-rail' i],html[data-rb-reader-mode='1'] #mw-panel,html[data-rb-reader-mode='1'] #mw-head{display:none!important}" +
+              "html[data-rb-reader-mode='1'] article,html[data-rb-reader-mode='1'] main,html[data-rb-reader-mode='1'] [role='main'],html[data-rb-reader-mode='1'] #content,html[data-rb-reader-mode='1'] .mw-body{max-width:740px!important;margin-left:auto!important;margin-right:auto!important;padding:18px 20px!important;float:none!important;width:100%!important;box-sizing:border-box!important;font-size:1.06rem!important;line-height:1.75!important}";
+          }
+        })()
+        """
+        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func printCurrentPage() {
+        guard !activeTab.isStartPage else { return }
+        let printInfo = UIPrintInfo(dictionary: nil)
+        printInfo.jobName = activeTab.title.isEmpty ? "Fluo Page" : activeTab.title
+        printInfo.outputType = .general
+        let controller = UIPrintInteractionController.shared
+        controller.printInfo = printInfo
+        controller.printFormatter = activeTab.webView.viewPrintFormatter()
+        controller.present(animated: true, completionHandler: nil)
+    }
+
+    func addCurrentPageToReadingList() {
+        guard !activeTab.isStartPage, !activeTab.urlString.isEmpty else { return }
+        upsertBookmark(
+            id: nil,
+            title: activeTab.title,
+            url: activeTab.urlString,
+            folder: "Reading List"
+        )
+    }
+
+    func summarizeActivePage() {
+        guard !activeTab.isStartPage else { return }
+        let js = """
+        (() => {
+          const nodes = [...document.querySelectorAll("article p, main p, [role='main'] p, p")];
+          const picked = [];
+          for (const el of nodes) {
+            const t = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
+            if (t.length >= 40) picked.push(t.slice(0, 280));
+            if (picked.length >= 4) break;
+          }
+          return picked;
+        })()
+        """
+        let tabTitle = activeTab.title
+        activeTab.webView.evaluateJavaScript(js) { [weak self] res, _ in
+            guard let self else { return }
+            let lines = (res as? [String]) ?? []
+            Task { @MainActor in
+                if lines.isEmpty {
+                    self.translationError = L10n.tr(self.uiLang, "tr.noBlocks")
+                    return
+                }
+                self.selectionSourceText = "✨ \(tabTitle)"
+                self.selectionTranslatedText = ""
+                self.showSelectionResultSheet = true
+                do {
+                    var bullets: [String] = []
+                    for line in lines {
+                        let tr = try await TranslationEngine.shared.translateText(
+                            line,
+                            provider: self.provider,
+                            modelId: self.activeModelId,
+                            baseUrl: self.openAiBaseUrl,
+                            targetLanguage: self.targetLanguage,
+                            style: "polished",
+                            glossary: self.userData.glossary.filter(\.enabled)
+                        )
+                        bullets.append("• \(tr.trimmingCharacters(in: .whitespacesAndNewlines))")
+                    }
+                    self.selectionTranslatedText = bullets.joined(separator: "\n\n")
+                } catch {
+                    self.selectionTranslatedText = error.localizedDescription
+                }
+            }
+        }
+    }
+
     // MARK: - Edge-Style Read Aloud (TTS)
 
     func startOrToggleTTS() {

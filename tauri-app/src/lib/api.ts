@@ -138,7 +138,9 @@ export const api = {
       | "scroll-top"
       | "scroll-bottom"
       | "media-rate"
-      | "toggle-dark-page",
+      | "toggle-dark-page"
+      | "toggle-reader-mode"
+      | "show-card",
     text?: string,
     x?: number,
     y?: number,

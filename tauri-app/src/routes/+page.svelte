@@ -795,6 +795,85 @@
     );
   }
 
+  async function addCurrentPageToReadingList() {
+    if (!activeTab?.url || activeTab.url.startsWith("tb://")) return;
+    try {
+      const normalized = normalizeBookmarkUrl(activeTab.url);
+      const now = Math.floor(Date.now() / 1000);
+      const folderName = trLocal("나중에 읽기", "Reading List", "あとで読む", "稍后阅读");
+      await api.saveBookmark({
+        id: crypto.randomUUID(),
+        url: normalized,
+        title: activeTab.title || normalized,
+        folder: folderName,
+        favorite: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      await loadBookmarks();
+      notify(
+        "success",
+        trLocal(
+          "📑 '나중에 읽기' 목록에 저장했습니다.",
+          "📑 Saved to Reading List.",
+          "📑 「あとで読む」に保存しました。",
+          "📑 已保存至“稍后阅读”。",
+        ),
+      );
+    } catch (cause) {
+      notify("error", errorMessage(cause));
+    }
+  }
+
+  async function summarizeCurrentPage() {
+    const model = translationModel.trim();
+    if (!model) {
+      notify("error", t("toast.quickNeedModel"));
+      return;
+    }
+    try {
+      const cardTitle = trLocal("✨ AI 페이지 핵심 요약", "✨ AI Page Summary", "✨ AI ページ要点要約", "✨ AI 页面核心摘要");
+      await api.runPageContextAction("show-card", cardTitle);
+      const extracted = article ?? (await api.extractArticle());
+      const topBlocks = extracted.blocks
+        .filter((b) => b.kind !== "code" && b.text.replace(/\[\[img\d+\]\]/g, "").trim().length >= 24)
+        .slice(0, 5);
+      if (topBlocks.length === 0) {
+        await api.showQuickTranslation(
+          trLocal(
+            "요약할 본문 텍스트를 찾지 못했습니다.",
+            "No summarizable text found on this page.",
+            "要約できる本文が見つかりませんでした。",
+            "未找到可摘要的正文文本。",
+          ),
+          true,
+        );
+        return;
+      }
+      const targetLang = (selectedTargetLanguage || settings.targetLanguage).trim() || "한국어";
+      const res = await api.translateBlocks(
+        topBlocks.map((b, i) => ({
+          id: `sum-${i}`,
+          text: b.text.replace(/\[\[img\d+\]\]/g, "").replace(/\[\[\d+\|([^\]]+)\]\]/g, "$1").slice(0, 320),
+        })),
+        "polished",
+        false,
+        model,
+        extracted.url,
+        extracted.title,
+        targetLang,
+      );
+      const bullets = res
+        .map((r) => r.translation.trim())
+        .filter(Boolean)
+        .map((line) => `• ${line}`)
+        .join("\n\n");
+      await api.showQuickTranslation(bullets || t("toast.quickEmpty"), false);
+    } catch (cause) {
+      await api.showQuickTranslation(errorMessage(cause), true);
+    }
+  }
+
   async function bookmarkAllTabs() {
     try {
       const state = await api.browserState();
@@ -4424,6 +4503,13 @@
           <button onclick={() => void triggerTranslateFromOverlay("region")}>
             <span>{t("pageMenu.regionTranslate")}</span>
           </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => summarizeCurrentPage());
+            }}
+          >
+            <span>✨ {trLocal("AI 페이지 핵심 요약", "AI Page Summary (TL;DR)", "AI ページ要点要約", "AI 页面核心摘要")}</span>
+          </button>
           {#if inlineMode}
             <button onclick={() => void triggerTranslateFromOverlay("restore")}>
               <span>{t("pageMenu.restoreOriginal")}</span>
@@ -4432,6 +4518,21 @@
           <div class="menu-divider"></div>
           <button onclick={() => void openFindBar()}>
             <span>{t("pageMenu.findDots")}</span><kbd>Ctrl+F</kbd>
+          </button>
+          <button
+            onclick={() => {
+              void addCurrentPageToReadingList();
+              void closeOverlay();
+            }}
+          >
+            <span>📑 {trLocal("나중에 읽기에 추가", "Add to Reading List", "あとで読むに追加", "添加到稍后阅读")}</span>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("toggle-reader-mode"));
+            }}
+          >
+            <span>📖 {trLocal("집중 읽기 모드 (방해 요소 숨김)", "Distraction-Free Reader Mode", "集中リーダーモード切替", "沉浸阅读模式 (隐藏干扰)")}</span>
           </button>
           <button
             onclick={() => {
@@ -4863,6 +4964,15 @@
                 {t("translate.stop")}
               </button>
             {/if}
+            <button
+              type="button"
+              onclick={() => {
+                void closeOverlay().then(() => summarizeCurrentPage());
+              }}
+              disabled={translating}
+            >
+              ✨ {trLocal("AI 페이지 핵심 요약", "AI Page Summary (TL;DR)", "AI ページ要点要約", "AI 页面核心摘要")}
+            </button>
             <button
               type="button"
               onclick={() => {

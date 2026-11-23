@@ -699,6 +699,35 @@
           "html[data-rb-smart-dark='1']{filter:invert(0.92) hue-rotate(180deg)!important;background:#121318!important}" +
           "html[data-rb-smart-dark='1'] img,html[data-rb-smart-dark='1'] video,html[data-rb-smart-dark='1'] picture,html[data-rb-smart-dark='1'] canvas,html[data-rb-smart-dark='1'] iframe{filter:invert(1) hue-rotate(180deg)!important}";
       }
+    } else if (action === "toggle-reader-mode") {
+      const root = document.documentElement;
+      if (!root) return;
+      const active = root.getAttribute("data-rb-reader-mode") === "1";
+      if (active) {
+        root.removeAttribute("data-rb-reader-mode");
+        document.getElementById("rb-reader-mode-style")?.remove();
+      } else {
+        root.setAttribute("data-rb-reader-mode", "1");
+        let st = document.getElementById("rb-reader-mode-style");
+        if (!st) {
+          st = document.createElement("style");
+          st.id = "rb-reader-mode-style";
+          root.appendChild(st);
+        }
+        st.textContent =
+          "html[data-rb-reader-mode='1'] aside,html[data-rb-reader-mode='1'] nav,html[data-rb-reader-mode='1'] footer,html[data-rb-reader-mode='1'] [role='navigation'],html[data-rb-reader-mode='1'] [role='complementary'],html[data-rb-reader-mode='1'] [class*='sidebar' i],html[data-rb-reader-mode='1'] [id*='sidebar' i],html[data-rb-reader-mode='1'] [class*='right-rail' i],html[data-rb-reader-mode='1'] #mw-panel,html[data-rb-reader-mode='1'] #mw-head{display:none!important}" +
+          "html[data-rb-reader-mode='1'] article,html[data-rb-reader-mode='1'] main,html[data-rb-reader-mode='1'] [role='main'],html[data-rb-reader-mode='1'] #content,html[data-rb-reader-mode='1'] .mw-body{max-width:760px!important;margin-left:auto!important;margin-right:auto!important;padding:20px 24px!important;float:none!important;width:100%!important;box-sizing:border-box!important;font-size:1.06rem!important;line-height:1.75!important}";
+      }
+    } else if (action === "show-card") {
+      const cardRect = {
+        left: Math.max(16, window.innerWidth - 360),
+        top: 96,
+        right: window.innerWidth - 16,
+        bottom: 112,
+        width: 336,
+        height: 16,
+      };
+      showQuickCard(cardRect, text || "✨ AI Summary");
     }
   };
 
