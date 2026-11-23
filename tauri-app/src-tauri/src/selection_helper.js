@@ -640,46 +640,10 @@
         target.focus();
         document.execCommand("insertText", false, text);
       }
-    } else if (action === "pip") {
-      if (document.pictureInPictureElement && typeof document.exitPictureInPicture === "function") {
-        document.exitPictureInPicture().catch(() => {});
-      } else {
-        const videos = [...document.querySelectorAll("video")];
-        const targetVideo =
-          videos.find((v) => !v.paused && !v.ended && v.readyState >= 2) ||
-          videos.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
-        if (targetVideo) {
-          if (typeof targetVideo.requestPictureInPicture === "function") {
-            targetVideo.requestPictureInPicture().catch(() => {});
-          } else if (typeof targetVideo.webkitSetPresentationMode === "function") {
-            targetVideo.webkitSetPresentationMode(
-              targetVideo.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture",
-            );
-          }
-        }
-      }
     } else if (action === "scroll-top") {
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else if (action === "scroll-bottom") {
       window.scrollTo({ top: document.documentElement.scrollHeight || 999999, behavior: "smooth" });
-    } else if (action === "media-rate") {
-      const medias = [...document.querySelectorAll("video, audio")];
-      if (medias.length > 0) {
-        const cur = medias[0].playbackRate || 1.0;
-        const nextRate =
-          text && text !== "cycle"
-            ? Math.max(0.25, Math.min(4.0, parseFloat(text) || 1.0))
-            : cur < 1.2
-              ? 1.25
-              : cur < 1.45
-                ? 1.5
-                : cur < 1.9
-                  ? 2.0
-                  : 1.0;
-        for (const m of medias) {
-          m.playbackRate = nextRate;
-        }
-      }
     } else if (action === "toggle-dark-page") {
       const root = document.documentElement;
       if (!root) return;
@@ -773,7 +737,6 @@
         imageUrl: imgEl ? imgEl.src || "" : "",
         selectedText,
         isEditable: Boolean(editEl),
-        hasMedia: document.querySelectorAll("video, audio").length > 0,
       };
       try {
         if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {

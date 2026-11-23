@@ -1,5 +1,3 @@
-import CoreImage
-import CoreImage.CIFilterBuiltins
 import SwiftUI
 import UIKit
 
@@ -681,20 +679,8 @@ struct MenuSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var copiedFeedback = false
-    @State private var showQRCode = false
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
-
-    private func generateQRCode(from string: String) -> UIImage? {
-        let context = CIContext()
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(string.utf8)
-        filter.correctionLevel = "M"
-        guard let outputImage = filter.outputImage else { return nil }
-        let transformed = outputImage.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
-        guard let cgimg = context.createCGImage(transformed, from: transformed.extent) else { return nil }
-        return UIImage(cgImage: cgimg)
-    }
 
     var body: some View {
         NavigationStack {
@@ -782,20 +768,6 @@ struct MenuSheet: View {
                                 }
                                 Divider().opacity(0.25)
 
-                                if store.activeTab.hasMediaOnPage {
-                                    menuRow(t("menu.pip"), icon: "pip") {
-                                        dismiss()
-                                        store.togglePictureInPicture()
-                                    }
-                                    Divider().opacity(0.25)
-
-                                    menuRow(t("menu.videoSpeed"), icon: "forward.circle") {
-                                        store.cycleMediaPlaybackRate()
-                                        dismiss()
-                                    }
-                                    Divider().opacity(0.25)
-                                }
-
                                 menuRow(t("menu.readerMode"), icon: "doc.text.magnifyingglass") {
                                     store.toggleReaderMode()
                                     dismiss()
@@ -813,29 +785,6 @@ struct MenuSheet: View {
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                                         store.printCurrentPage()
                                     }
-                                }
-                                Divider().opacity(0.25)
-
-                                menuRow(t("menu.qrCode"), icon: "qrcode") {
-                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
-                                        showQRCode.toggle()
-                                    }
-                                }
-                                if showQRCode, let qrImg = generateQRCode(from: BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)) {
-                                    VStack(spacing: 8) {
-                                        Image(uiImage: qrImg)
-                                            .interpolation(.none)
-                                            .resizable()
-                                            .scaledToFit()
-                                            .frame(width: 156, height: 156)
-                                            .padding(10)
-                                            .background(Color.white, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                        Text(store.currentHost)
-                                            .font(.caption2.weight(.semibold))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
                                 }
 
                                 if store.activeTab.displayMode != .original {

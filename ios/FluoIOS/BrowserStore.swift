@@ -58,7 +58,6 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     @Published var displayMode: InlineDisplayMode = .original
     @Published var pageErrorText: String? = nil
     @Published var detectedLanguage: String = "unknown"
-    @Published var hasMediaOnPage: Bool = false
 
     var lastActiveAt: Date = Date()
     var cameFromStartPage: Bool = false
@@ -132,12 +131,8 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
       setTimeout(() => {
         if (location.protocol === "http:" || location.protocol === "https:") {
           post({ type: "page-language-detected", lang: window.__fluoDetectLanguage(), url: location.href });
-          post({ type: "media-presence", hasMedia: document.querySelectorAll("video, audio").length > 0 });
         }
       }, 600);
-      document.addEventListener("loadedmetadata", () => {
-        post({ type: "media-presence", hasMedia: document.querySelectorAll("video, audio").length > 0 });
-      }, true);
 
       let dynObs = null;
       let dynTimer = 0;
@@ -354,7 +349,6 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         }
         if let target = Self.resolveInputToURL(trimmed, searchEngine: searchEngine) {
             displayMode = .original
-            hasMediaOnPage = false
             urlString = target.absoluteString
             canGoBack = webView.canGoBack || cameFromStartPage
             canGoForward = webView.canGoForward
@@ -365,7 +359,6 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     func openStartPage() {
         webView.stopLoading()
         isSleeping = false
-        hasMediaOnPage = false
         pageErrorText = nil
         cameFromStartPage = true
         displayMode = .original
@@ -803,8 +796,6 @@ final class BrowserStore: ObservableObject {
             let lang = (payload["lang"] as? String) ?? "unknown"
             tab.detectedLanguage = lang
             evaluateAutoTranslatePolicy(for: tab, detectedLang: lang)
-        case "media-presence":
-            tab.hasMediaOnPage = (payload["hasMedia"] as? Bool) ?? false
         case "dynamic-blocks-added":
             if tab.displayMode != .original && !isTranslating {
                 translateActiveTab(bilingual: tab.displayMode == .bilingual)
@@ -1682,41 +1673,6 @@ final class BrowserStore: ObservableObject {
         """
         let body = (try? await tab.webView.evaluateJavaScript(js) as? String) ?? ""
         return "# \(tab.title)\n\nSource: \(tab.urlString)\n\n---\n\n\(body)"
-    }
-
-    func togglePictureInPicture() {
-        let js = """
-        (() => {
-          if (document.pictureInPictureElement && typeof document.exitPictureInPicture === "function") {
-            document.exitPictureInPicture().catch(() => {});
-            return;
-          }
-          const videos = [...document.querySelectorAll("video")];
-          const v = videos.find(el => !el.paused && !el.ended && el.readyState >= 2)
-            || videos.sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0];
-          if (!v) return;
-          if (typeof v.webkitSetPresentationMode === "function") {
-            v.webkitSetPresentationMode(v.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
-          } else if (typeof v.requestPictureInPicture === "function") {
-            v.requestPictureInPicture().catch(() => {});
-          }
-        })()
-        """
-        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
-    }
-
-    func cycleMediaPlaybackRate() {
-        let js = """
-        (() => {
-          const medias = [...document.querySelectorAll("video, audio")];
-          if (medias.length === 0) return 0;
-          const cur = medias[0].playbackRate || 1.0;
-          const next = cur < 1.2 ? 1.25 : (cur < 1.45 ? 1.5 : (cur < 1.9 ? 2.0 : 1.0));
-          medias.forEach(m => { m.playbackRate = next; });
-          return next;
-        })()
-        """
-        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     func toggleSmartDarkPage() {

@@ -78,7 +78,6 @@
     imageUrl: string;
     selectedText: string;
     isEditable: boolean;
-    hasMedia: boolean;
   };
 
   const initialOverlay = typeof window === "undefined"
@@ -2564,7 +2563,6 @@
         imageUrl?: string;
         selectedText?: string;
         isEditable?: boolean;
-        hasMedia?: boolean;
         origin?: string;
         username?: string;
         password?: string;
@@ -2652,7 +2650,6 @@
           imageUrl: msg.imageUrl ?? "",
           selectedText: msg.selectedText ?? "",
           isEditable: Boolean(msg.isEditable),
-          hasMedia: Boolean(msg.hasMedia),
         };
         overlayAnchor = { left: cx, top: cy, right: cx, bottom: cy };
         overlayChromeTop = headerHeight;
@@ -2967,7 +2964,6 @@
               imageUrl: action.imageUrl ?? "",
               selectedText: action.selectedText ?? "",
               isEditable: Boolean(action.isEditable),
-              hasMedia: Boolean(action.hasMedia),
             };
             void openOverlay("page-menu", { left: cx, top: cy, right: cx, bottom: cy });
             return;
@@ -3945,7 +3941,6 @@
             imageUrl: "",
             selectedText: pageMenuContext?.selectedText ?? "",
             isEditable: false,
-            hasMedia: false,
           };
           overlayAnchor = {
             left: event.clientX,
@@ -4562,22 +4557,6 @@
           >
             <span>🔊 {trLocal("소리 내어 읽기 (TTS)", "Read Aloud (TTS)", "音声読み上げ (TTS)", "语音朗读 (TTS)")}</span>
           </button>
-          {#if pageMenuContext?.hasMedia}
-            <button
-              onclick={() => {
-                void closeOverlay().then(() => api.runPageContextAction("pip"));
-              }}
-            >
-              <span>📺 {trLocal("동영상 PIP (화면 속 화면)", "Picture-in-Picture (PiP)", "ピクチャ・イン・ピクチャ (PiP)", "画中画模式 (PiP)")}</span>
-            </button>
-            <button
-              onclick={() => {
-                void closeOverlay().then(() => api.runPageContextAction("media-rate", "cycle"));
-              }}
-            >
-              <span>⏩ {trLocal("동영상 배속 전환 (1.0x~2.0x)", "Cycle Video Speed (1.0x–2.0x)", "動画再生速度を切替 (1.0x〜2.0x)", "切换视频倍速 (1.0x–2.0x)")}</span>
-            </button>
-          {/if}
           <button
             onclick={() => {
               void closeOverlay().then(() => api.runPageContextAction("toggle-dark-page"));

@@ -115,7 +115,6 @@ export const api = {
           imageUrl?: string;
           selectedText?: string;
           isEditable?: boolean;
-          hasMedia?: boolean;
         }
       | null
     >("poll_page_action"),
@@ -135,10 +134,8 @@ export const api = {
       | "tts-next"
       | "tts-prev"
       | "tts-rate"
-      | "pip"
       | "scroll-top"
       | "scroll-bottom"
-      | "media-rate"
       | "toggle-dark-page"
       | "toggle-reader-mode"
       | "show-card",
