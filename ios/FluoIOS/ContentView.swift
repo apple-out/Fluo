@@ -262,6 +262,15 @@ struct ContentView: View {
                 }
             }
 
+            if isEditingURL {
+                Color.black.opacity(0.24)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        dismissOmniboxEditing()
+                    }
+                    .transition(.opacity)
+            }
+
             VStack(spacing: 8) {
                 if isEditingURL {
                     omniboxOverlayPanel
@@ -1011,21 +1020,22 @@ struct ContentView: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .offset(x: dockDragOffset)
-                        .gesture(dockDragGesture)
 
-                        if store.activeTab.isLoading {
-                            Button {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            if store.activeTab.isLoading {
                                 store.activeTab.webView.stopLoading()
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.caption.weight(.bold))
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 26, height: 30)
-                                    .contentShape(Circle())
+                            } else {
+                                store.activeTab.webView.reload()
                             }
-                            .buttonStyle(.plain)
+                        } label: {
+                            Image(systemName: store.activeTab.isLoading ? "xmark" : "arrow.clockwise")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 26, height: 30)
+                                .contentShape(Circle())
                         }
+                        .buttonStyle(.plain)
 
                         // Inline Translate Sparkle Orb
                         Button {
@@ -1076,6 +1086,8 @@ struct ContentView: View {
                     .liquidGlassPill(
                         tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
                     )
+                    .offset(x: dockDragOffset)
+                    .simultaneousGesture(dockDragGesture)
 
                     // Tab Deck Counter Squircle
                     Button {
