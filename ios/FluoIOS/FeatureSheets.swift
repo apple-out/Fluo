@@ -1237,15 +1237,6 @@ struct SiteSecuritySheet: View {
             .navigationTitle(t("sec.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let onAddCurrent {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            onAddCurrent()
-                        } label: {
-                            Label(store.isCurrentPageBookmarked ? t("bm.editTitle") : t("bm.addTitle"), systemImage: "plus")
-                        }
-                    }
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }
@@ -1711,15 +1702,6 @@ struct SelectionResultSheet: View {
             .navigationTitle(t("sel.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let onAddCurrent {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            onAddCurrent()
-                        } label: {
-                            Label(store.isCurrentPageBookmarked ? t("bm.editTitle") : t("bm.addTitle"), systemImage: "plus")
-                        }
-                    }
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }
