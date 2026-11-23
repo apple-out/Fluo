@@ -23,6 +23,7 @@ private struct SelectAllURLField: UIViewRepresentable {
     @Binding var text: String
     @Binding var isEditing: Bool
     var placeholder: String
+    var autoFocus: Bool = false
     var onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -54,10 +55,17 @@ private struct SelectAllURLField: UIViewRepresentable {
         if uiView.markedTextRange == nil && uiView.text != text {
             uiView.text = text
         }
+        if autoFocus && !context.coordinator.didAutoFocus {
+            context.coordinator.didAutoFocus = true
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+            }
+        }
     }
 
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: SelectAllURLField
+        var didAutoFocus = false
 
         init(_ parent: SelectAllURLField) {
             self.parent = parent
@@ -140,22 +148,41 @@ struct ContentView: View {
     private var securityIconColor: Color {
         if store.activeTab.isPrivate { return FluoThemeTokens.violet }
         if store.activeTab.isStartPage { return FluoThemeTokens.indigo }
-        return isHttps ? .green : .orange
+        return isHttps ? FluoThemeTokens.emerald : FluoThemeTokens.amber
+    }
+
+    private var displayDomain: String {
+        guard let host = URL(string: store.activeTab.urlString)?.host, !host.isEmpty else {
+            return store.activeTab.title.isEmpty ? "Fluo" : store.activeTab.title
+        }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 if store.activeTab.isLoading {
-                    ProgressView(value: store.activeTab.progress)
-                        .tint(FluoThemeTokens.indigo)
-                        .progressViewStyle(.linear)
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Color.clear
+                            Capsule()
+                                .fill(FluoThemeTokens.liquidGradient)
+                                .frame(
+                                    width: max(28, geo.size.width * min(max(store.activeTab.progress, 0.08), 1.0)),
+                                    height: 2.5
+                                )
+                                .shadow(color: FluoThemeTokens.indigo.opacity(0.65), radius: 4, y: 1)
+                                .animation(.easeOut(duration: 0.2), value: store.activeTab.progress)
+                        }
+                    }
+                    .frame(height: 2.5)
                 }
 
                 if store.showFindBar {
                     findBar
                         .padding(.horizontal, 12)
                         .padding(.top, 6)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
                 if store.isPickingRegion {
@@ -175,9 +202,10 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .liquidGlass(cornerRadius: 18, tint: FluoThemeTokens.indigo)
+                    .liquidGlass(cornerRadius: 20, tint: FluoThemeTokens.indigo)
                     .padding(.horizontal, 12)
                     .padding(.top, 6)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
 
                 if store.activeTab.isStartPage {
@@ -194,10 +222,10 @@ struct ContentView: View {
                             .ignoresSafeArea(edges: .bottom)
 
                         if let pageErr = store.activeTab.pageErrorText {
-                            VStack(spacing: 12) {
+                            VStack(spacing: 14) {
                                 Image(systemName: "wifi.exclamationmark")
                                     .font(.largeTitle)
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(FluoThemeTokens.amber)
                                 Text(pageErr)
                                     .font(.footnote)
                                     .multilineTextAlignment(.center)
@@ -212,8 +240,9 @@ struct ContentView: View {
                                         }
                                     }
                                     .font(.caption.bold())
+                                    .foregroundStyle(.white)
                                     .padding(.horizontal, 16)
-                                    .padding(.vertical, 8)
+                                    .padding(.vertical, 9)
                                     .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
 
                                     Button(t("menu.startPage")) {
@@ -221,12 +250,12 @@ struct ContentView: View {
                                     }
                                     .font(.caption.bold())
                                     .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
+                                    .padding(.vertical, 9)
                                     .liquidGlassPill(interactive: true)
                                 }
                             }
-                            .padding(20)
-                            .liquidGlass(cornerRadius: 24)
+                            .padding(22)
+                            .liquidGlass(cornerRadius: 26)
                             .padding(.horizontal, 24)
                         }
                     }
@@ -236,6 +265,7 @@ struct ContentView: View {
             VStack(spacing: 8) {
                 if isEditingURL {
                     omniboxOverlayPanel
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 if !isEditingURL && !store.liveWebSelection.isEmpty {
@@ -270,15 +300,16 @@ struct ContentView: View {
                     .padding(.vertical, 7)
                     .liquidGlassPill()
                     .padding(.horizontal, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 if store.isSpeakingTTS {
                     HStack(spacing: 12) {
-                        Image(systemName: "speaker.wave.2.fill")
-                            .foregroundStyle(FluoThemeTokens.indigo)
+                        Image(systemName: "waveform")
+                            .foregroundStyle(FluoThemeTokens.cyan)
                             .font(.caption.bold())
                         Text("\(store.ttsIndex + 1)/\(max(1, store.ttsTotal))")
-                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .font(.caption.monospacedDigit().weight(.bold))
                         Button {
                             store.stepTTS(delta: -1)
                         } label: {
@@ -319,12 +350,13 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                    .liquidGlassPill(tint: FluoThemeTokens.cyan)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 if !isEditingURL && store.showAutoTranslatePrompt && !store.isTranslating && store.activeTab.displayMode == .original {
                     HStack(spacing: 8) {
-                        Image(systemName: "globe")
+                        Image(systemName: "sparkles")
                             .font(.caption.bold())
                             .foregroundStyle(FluoThemeTokens.indigo)
                         Text("\(t("tr.autoPrompt")) (\(store.detectedForeignLanguageCode))")
@@ -336,7 +368,7 @@ struct ContentView: View {
                         }
                         .font(.caption.bold())
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
+                        .padding(.horizontal, 11)
                         .padding(.vertical, 5)
                         .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
 
@@ -360,7 +392,9 @@ struct ContentView: View {
                     .padding(.vertical, 8)
                     .liquidGlassPill()
                     .padding(.horizontal, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
+
                 if store.isTranslating {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -384,6 +418,7 @@ struct ContentView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
                     .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
                 if let err = store.translationError {
@@ -411,12 +446,15 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
-                    .liquidGlass(cornerRadius: 16, tint: .red)
+                    .liquidGlass(cornerRadius: 18, tint: .red)
                     .padding(.horizontal, 14)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                safariBottomChrome
+                spatialBottomDock
             }
+            .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.86), value: isEditingURL)
+            .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.88), value: store.isDockCollapsed)
         }
         .preferredColorScheme(resolvedColorScheme)
         .onAppear {
@@ -511,6 +549,11 @@ struct ContentView: View {
         urlDraft = store.activeTab.isStartPage ? "" : store.activeTab.urlString
     }
 
+    private func dismissOmniboxEditing() {
+        isEditingURL = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
     private var omniboxOverlayPanel: some View {
         let suggestions = store.omniboxSuggestions(for: urlDraft)
         return VStack(spacing: 6) {
@@ -522,12 +565,10 @@ struct ContentView: View {
                                 UIPasteboard.general.string = item.targetURLOrQuery
                                 urlDraft = item.targetURLOrQuery
                             } else if item.kind == .switchTab, let tid = item.tabId {
-                                isEditingURL = false
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                dismissOmniboxEditing()
                                 store.selectTab(tid)
                             } else {
-                                isEditingURL = false
-                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                dismissOmniboxEditing()
                                 store.activeTab.navigate(input: item.targetURLOrQuery, searchEngine: store.userData.searchEngine)
                             }
                         } label: {
@@ -572,7 +613,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                .liquidGlass(cornerRadius: 18)
+                .liquidGlass(cornerRadius: 20)
                 .padding(.horizontal, 12)
             }
 
@@ -597,8 +638,7 @@ struct ContentView: View {
                     if let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
                        !clip.isEmpty {
                         Button {
-                            isEditingURL = false
-                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            dismissOmniboxEditing()
                             store.activeTab.navigate(input: clip, searchEngine: store.userData.searchEngine)
                         } label: {
                             Label("Paste & Go", systemImage: "doc.on.clipboard")
@@ -715,242 +755,396 @@ struct ContentView: View {
         }
     }
 
-    private var safariBottomChrome: some View {
-        let collapsed = store.isDockCollapsed && !store.activeTab.isStartPage
-        let displayHost = URL(string: store.activeTab.urlString)?.host ?? store.activeTab.title
-
-        return VStack(spacing: collapsed ? 0 : 8) {
-            // Safari-style Top Row: Address & Security Pill (morphs smoothly into compact pill when scrolled)
-            HStack(spacing: 8) {
+    @ViewBuilder
+    private var backButtonView: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            store.activeTab.goBackFromCurrent()
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 15, weight: .bold))
+                .frame(width: 38, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(LiquidPressButtonStyle())
+        .contextMenu {
+            backForwardContextMenu(
+                items: Array(store.activeTab.webView.backForwardList.backList.reversed().prefix(8))
+            )
+            if store.activeTab.cameFromStartPage && !store.activeTab.isStartPage {
                 Button {
-                    activeSheet = .siteSecurity
+                    store.activeTab.openStartPage()
                 } label: {
-                    Image(systemName: securityIconName)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(securityIconColor)
-                        .frame(width: 24, height: 24)
+                    Label(t("start.title"), systemImage: "house")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var forwardButtonView: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            store.activeTab.goForwardFromCurrent()
+        } label: {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 15, weight: .bold))
+                .frame(width: 38, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(LiquidPressButtonStyle())
+        .contextMenu {
+            backForwardContextMenu(
+                items: Array(store.activeTab.webView.backForwardList.forwardList.prefix(8))
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var spatialBottomDock: some View {
+        if isEditingURL {
+            // Mode A: Full-width Command Omnibox
+            HStack(spacing: 10) {
+                Image(systemName: securityIconName)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(securityIconColor)
+                    .frame(width: 24, height: 24)
+
+                SelectAllURLField(
+                    text: $urlDraft,
+                    isEditing: $isEditingURL,
+                    placeholder: t("bar.urlPlaceholder"),
+                    autoFocus: true
+                ) {
+                    store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
+                }
+                .frame(height: 26)
+
+                Button {
+                    dismissOmniboxEditing()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 28)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(t("sec.title"))
-
-                if collapsed {
-                    Text(displayHost.isEmpty ? "Fluo" : displayHost)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                } else {
-                    SelectAllURLField(
-                        text: $urlDraft,
-                        isEditing: $isEditingURL,
-                        placeholder: t("bar.urlPlaceholder")
-                    ) {
-                        store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .liquidGlassPill(tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : FluoThemeTokens.indigo)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+        } else if store.activeTab.isStartPage {
+            // Mode B: Start Page Asymmetric Floating Action Pill Bar (no duplicate bottom URL bar)
+            LiquidGlassGroup(spacing: 10) {
+                HStack(spacing: 10) {
+                    if store.activeTab.canGoForward {
+                        forwardButtonView
+                            .frame(width: 44, height: 44)
+                            .liquidGlassCircle(interactive: true)
                     }
-                    .frame(height: 24)
-                }
 
-                if collapsed {
-                    if store.activeTab.displayMode != .original {
-                        Image(systemName: "character.bubble.fill")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(FluoThemeTokens.indigo)
-                    }
-                } else if !store.activeTab.isStartPage {
                     Button {
-                        if store.activeTab.isLoading {
-                            store.activeTab.webView.stopLoading()
-                        } else {
-                            store.activeTab.webView.reload()
-                        }
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        activeSheet = .bookmarks
                     } label: {
-                        Image(systemName: store.activeTab.isLoading ? "xmark" : "arrow.clockwise")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28, height: 28)
-                            .contentShape(Rectangle())
+                        HStack(spacing: 7) {
+                            Image(systemName: "books.vertical.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(FluoThemeTokens.indigo)
+                            Text(t("bm.title"))
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .padding(.horizontal, 16)
+                        .frame(height: 44)
+                        .contentShape(Capsule())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassPill(interactive: true)
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        activeSheet = .tabs
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "square.on.square")
+                                .font(.system(size: 13, weight: .bold))
+                            Text("\(store.activeWorkspaceTabs.count)")
+                                .font(.caption.monospacedDigit().weight(.black))
+                        }
+                        .padding(.horizontal, 14)
+                        .frame(height: 44)
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassPill(interactive: true)
+                    .contextMenu {
+                        Button {
+                            store.newTab(isPrivate: false)
+                        } label: {
+                            Label(t("tabs.newTab"), systemImage: "plus")
+                        }
+                        Button {
+                            store.newTab(isPrivate: true)
+                        } label: {
+                            Label(t("tabs.newPrivate"), systemImage: "eye.slash")
+                        }
+                    }
+
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        activeSheet = .menu
+                    } label: {
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(interactive: true)
+                    .contextMenu {
+                        Button {
+                            activeSheet = .settings
+                        } label: {
+                            Label(t("menu.settings"), systemImage: "gearshape")
+                        }
+                        Button {
+                            activeSheet = .glossary
+                        } label: {
+                            Label(t("menu.glossary"), systemImage: "character.book.closed")
+                        }
+                        Button {
+                            activeSheet = .history
+                        } label: {
+                            Label(t("menu.history"), systemImage: "clock")
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, collapsed ? 14 : 12)
-            .padding(.vertical, collapsed ? 8 : 7)
-            .frame(maxWidth: collapsed ? 230 : .infinity)
+            .padding(.bottom, 8)
+        } else if store.isDockCollapsed {
+            // Mode C-1: Collapsed Floating Reading Island (single-tap expands in 0ms)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(securityIconColor)
+                    .frame(width: 7, height: 7)
+
+                Text(displayDomain)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(1)
+
+                if store.activeTab.displayMode != .original {
+                    Image(systemName: "sparkles")
+                        .font(.caption2.bold())
+                        .foregroundStyle(FluoThemeTokens.indigo)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .frame(maxWidth: 184)
             .liquidGlassPill(
-                tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
+                tint: store.activeTab.isPrivate
+                    ? FluoThemeTokens.violet
+                    : (store.activeTab.displayMode != .original ? FluoThemeTokens.indigo : .clear),
+                interactive: true
             )
+            .offset(x: dockDragOffset)
             .contentShape(Capsule())
             .onTapGesture {
-                guard collapsed else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 store.isDockCollapsed = false
             }
             .gesture(dockDragGesture)
+            .padding(.bottom, 6)
+        } else {
+            // Mode C-2: Expanded Asymmetric Floating Single-Row Spatial Dock
+            LiquidGlassGroup(spacing: 8) {
+                HStack(spacing: 8) {
+                    // Dynamic Back / Forward cluster (only consumes space when active)
+                    if store.activeTab.canGoBack && store.activeTab.canGoForward {
+                        HStack(spacing: 0) {
+                            backButtonView
+                            Capsule()
+                                .fill(Color.primary.opacity(0.14))
+                                .frame(width: 1, height: 18)
+                            forwardButtonView
+                        }
+                        .frame(height: 44)
+                        .liquidGlassPill(interactive: true)
+                    } else if store.activeTab.canGoBack {
+                        backButtonView
+                            .frame(width: 42, height: 44)
+                            .liquidGlassCircle(interactive: true)
+                    } else if store.activeTab.canGoForward {
+                        forwardButtonView
+                            .frame(width: 42, height: 44)
+                            .liquidGlassCircle(interactive: true)
+                    }
 
-            // Safari-style Bottom Action Toolbar Row (smoothly height/opacity collapses on scroll down)
-            LiquidGlassGroup(spacing: 10) {
-                HStack(spacing: 0) {
+                    // Hero Center Reading Capsule
+                    HStack(spacing: 6) {
+                        Button {
+                            activeSheet = .siteSecurity
+                        } label: {
+                            Image(systemName: securityIconName)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(securityIconColor)
+                                .frame(width: 28, height: 34)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(t("sec.title"))
+
+                        Button {
+                            syncDraftFromActiveTab()
+                            isEditingURL = true
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(displayDomain)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 34)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .offset(x: dockDragOffset)
+                        .gesture(dockDragGesture)
+
+                        if store.activeTab.isLoading {
+                            Button {
+                                store.activeTab.webView.stopLoading()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 26, height: 30)
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+
+                        // Inline Translate Sparkle Orb
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            activeSheet = .translate
+                        } label: {
+                            Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
+                                .frame(width: 32, height: 32)
+                                .background {
+                                    if store.activeTab.displayMode == .original {
+                                        Circle().fill(Color.primary.opacity(0.08))
+                                    } else {
+                                        Circle().fill(FluoThemeTokens.liquidGradient)
+                                    }
+                                }
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(LiquidPressButtonStyle())
+                        .contextMenu {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.translateActiveTab(bilingual: false)
+                            } label: {
+                                Label(t("tr.inline"), systemImage: "sparkles")
+                            }
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.translateActiveTab(bilingual: true)
+                            } label: {
+                                Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
+                            }
+                            if store.activeTab.displayMode != .original {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    store.restoreOriginal()
+                                } label: {
+                                    Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                                }
+                            }
+                        }
+                    }
+                    .padding(.leading, 8)
+                    .padding(.trailing, 6)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .liquidGlassPill(
+                        tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
+                    )
+
+                    // Tab Deck Counter Squircle
                     Button {
                         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        store.activeTab.goBackFromCurrent()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(LiquidPressButtonStyle())
-                    .liquidGlassCircle(interactive: true)
-                    .disabled(!store.activeTab.canGoBack)
-                    .opacity(store.activeTab.canGoBack ? 1.0 : 0.38)
-                    .contextMenu {
-                        backForwardContextMenu(
-                            items: Array(store.activeTab.webView.backForwardList.backList.reversed().prefix(8))
-                        )
-                        if store.activeTab.cameFromStartPage && !store.activeTab.isStartPage {
-                            Button {
-                                store.activeTab.openStartPage()
-                            } label: {
-                                Label(t("start.title"), systemImage: "house")
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                        store.activeTab.goForwardFromCurrent()
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(LiquidPressButtonStyle())
-                    .liquidGlassCircle(interactive: true)
-                    .disabled(!store.activeTab.canGoForward)
-                    .opacity(store.activeTab.canGoForward ? 1.0 : 0.38)
-                    .contextMenu {
-                        backForwardContextMenu(
-                            items: Array(store.activeTab.webView.backForwardList.forwardList.prefix(8))
-                        )
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        activeSheet = .translate
-                    } label: {
-                        Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
-                            .frame(width: 44, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(LiquidPressButtonStyle())
-                    .liquidGlassCircle(
-                        tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
-                        interactive: true,
-                        prominent: store.activeTab.displayMode != .original
-                    )
-                    .contextMenu {
-                        Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            store.translateActiveTab(bilingual: false)
-                        } label: {
-                            Label(t("tr.inline"), systemImage: "sparkles")
-                        }
-                        Button {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            store.translateActiveTab(bilingual: true)
-                        } label: {
-                            Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
-                        }
-                        if store.activeTab.displayMode != .original {
-                            Button {
-                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                store.restoreOriginal()
-                            } label: {
-                                Label(t("tr.original"), systemImage: "arrow.uturn.backward")
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        activeSheet = .bookmarks
-                    } label: {
-                        Image(systemName: store.isCurrentPageBookmarked ? "star.fill" : "book")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(store.isCurrentPageBookmarked ? .white : .primary)
-                            .frame(width: 40, height: 40)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(LiquidPressButtonStyle())
-                    .liquidGlassCircle(
-                        tint: store.isCurrentPageBookmarked ? FluoThemeTokens.indigo : .clear,
-                        interactive: true,
-                        prominent: store.isCurrentPageBookmarked
-                    )
-                    .accessibilityLabel(t("bm.title"))
-                    .contextMenu {
-                        if !store.activeTab.isStartPage {
-                            Button {
-                                openBookmarkEditor(for: store.currentBookmark())
-                            } label: {
-                                Label(
-                                    store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
-                                    systemImage: "star"
-                                )
-                            }
-                            Button {
-                                store.addCurrentPageToReadingList()
-                            } label: {
-                                Label(t("menu.readingListAdd"), systemImage: "eyeglasses")
-                            }
-                        }
-                    }
-
-                    Spacer(minLength: 4)
-
-                    Button {
                         activeSheet = .tabs
                     } label: {
                         Text("\(store.activeWorkspaceTabs.count)")
-                            .font(.caption.bold())
-                            .frame(width: 40, height: 40)
-                            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                            .font(.caption.monospacedDigit().weight(.black))
+                            .frame(width: 42, height: 44)
+                            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
                     }
                     .buttonStyle(LiquidPressButtonStyle())
-                    .liquidGlass(cornerRadius: 13, interactive: true)
+                    .liquidGlass(cornerRadius: 15, interactive: true)
                     .accessibilityLabel(t("tabs.title"))
+                    .contextMenu {
+                        Button {
+                            store.newTab(isPrivate: false)
+                        } label: {
+                            Label(t("tabs.newTab"), systemImage: "plus")
+                        }
+                        Button {
+                            store.newTab(isPrivate: true)
+                        } label: {
+                            Label(t("tabs.newPrivate"), systemImage: "eye.slash")
+                        }
+                    }
 
-                    Spacer(minLength: 4)
-
+                    // Spatial Bento Menu Orb (long-press gives instant Bookmarks / Reading List access)
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         activeSheet = .menu
                     } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 16, weight: .bold))
-                            .frame(width: 40, height: 40)
+                        Image(systemName: store.isCurrentPageBookmarked ? "bookmark.fill" : "square.grid.2x2")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(store.isCurrentPageBookmarked ? FluoThemeTokens.indigo : .primary)
+                            .frame(width: 42, height: 44)
                             .contentShape(Circle())
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .liquidGlassCircle(interactive: true)
-                    .accessibilityLabel(t("menu.title"))
+                    .contextMenu {
+                        Button {
+                            activeSheet = .bookmarks
+                        } label: {
+                            Label(t("bm.title"), systemImage: "books.vertical")
+                        }
+                        Button {
+                            openBookmarkEditor(for: store.currentBookmark())
+                        } label: {
+                            Label(
+                                store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
+                                systemImage: "star"
+                            )
+                        }
+                        Button {
+                            store.addCurrentPageToReadingList()
+                        } label: {
+                            Label(t("menu.readingListAdd"), systemImage: "eyeglasses")
+                        }
+                        Button {
+                            activeSheet = .settings
+                        } label: {
+                            Label(t("menu.settings"), systemImage: "gearshape")
+                        }
+                    }
                 }
+                .padding(.horizontal, 12)
             }
-            .frame(height: collapsed ? 0 : 44)
-            .opacity(collapsed ? 0 : 1)
-            .scaleEffect(collapsed ? 0.92 : 1.0, anchor: .bottom)
-            .clipped()
-            .allowsHitTesting(!collapsed)
+            .padding(.bottom, 6)
         }
-        .liquidGlassDockChrome(tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear)
-        .offset(x: dockDragOffset)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 6)
-        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.88), value: store.isDockCollapsed)
     }
 }
