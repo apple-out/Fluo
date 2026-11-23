@@ -115,6 +115,7 @@ export const api = {
           imageUrl?: string;
           selectedText?: string;
           isEditable?: boolean;
+          hasMedia?: boolean;
         }
       | null
     >("poll_page_action"),

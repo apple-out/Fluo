@@ -3583,36 +3583,11 @@ fn hy_mt2_style_tag(style: &str, source_text: &str, is_dialogue: bool) -> Option
 }
 
 fn builtin_ja_ko_novel_hints(
-    source_text: &str,
-    target_lang: &str,
+    _source_text: &str,
+    _target_lang: &str,
 ) -> Vec<(&'static str, &'static str)> {
-    if !target_lang.eq_ignore_ascii_case("Korean") {
-        return Vec::new();
-    }
-    // Keep Reference Glossary strictly limited to Proper Nouns & Fantasy Entities so 1.8B Q4/Q6
-    // never confuses verb/clause hints with dictionary definition requests.
-    const HINTS: &[(&str, &str)] = &[
-        ("シアーシャ", "시아샤"),
-        ("ウルバス", "우르바스"),
-        ("ジグ", "지그"),
-        ("シアン", "시안"),
-        ("ハインツ", "하인츠"),
-        ("リザ", "리자"),
-        ("アラン", "아란"),
-        ("澄人教", "징인교"),
-        ("鱗人", "비늘족"),
-        ("緑鱗氏族", "녹비늘 부족"),
-        ("削岩竜", "착암룡"),
-        ("猿狗", "원구"),
-        ("三面鬼", "삼면귀"),
-        ("瞬膜", "순막"),
-        ("ハルバード", "할버드"),
-    ];
-    HINTS
-        .iter()
-        .copied()
-        .filter(|(src, _)| source_text.contains(*src))
-        .collect()
+    // User-specific proper nouns and fandom terminology belong in the user Glossary rather than hardcoded defaults.
+    Vec::new()
 }
 
 pub fn format_instruct_prompt_pair(

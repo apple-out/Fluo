@@ -773,6 +773,7 @@
         imageUrl: imgEl ? imgEl.src || "" : "",
         selectedText,
         isEditable: Boolean(editEl),
+        hasMedia: document.querySelectorAll("video, audio").length > 0,
       };
       try {
         if (window.chrome && window.chrome.webview && typeof window.chrome.webview.postMessage === "function") {

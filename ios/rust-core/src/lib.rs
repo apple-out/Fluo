@@ -84,55 +84,245 @@ fn normalize_target_lang(lang: &str) -> &'static str {
     }
 }
 
+fn hy_mt2_zh_language_name(norm_lang: &str) -> &str {
+    match norm_lang {
+        "Korean" => "韩语",
+        "English" => "英语",
+        "Japanese" => "日语",
+        "Chinese" => "中文",
+        "Traditional Chinese" => "繁体中文",
+        _ => norm_lang,
+    }
+}
+
+fn source_is_chinese(source_text: &str) -> bool {
+    let mut hanzi = 0usize;
+    for ch in source_text.chars() {
+        match ch {
+            '\u{AC00}'..='\u{D7A3}' | '\u{3131}'..='\u{318E}' => return false,
+            '\u{3040}'..='\u{30FF}' | '\u{FF65}'..='\u{FF9F}' => return false,
+            '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' => hanzi += 1,
+            _ => {}
+        }
+    }
+    hanzi > 0
+}
+
+fn is_dialogue_segment(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    const PAIRS: [(char, char); 5] = [
+        ('「', '」'),
+        ('『', '』'),
+        ('“', '”'),
+        ('"', '"'),
+        ('‘', '’'),
+    ];
+    PAIRS
+        .iter()
+        .any(|(open, close)| trimmed.starts_with(*open) && trimmed.ends_with(*close))
+}
+
+fn hy_mt2_style_tag(style: &str, is_dialogue: bool) -> Option<&'static str> {
+    match style.trim().to_ascii_lowercase().as_str() {
+        "literal" => {
+            Some("faithful literal translation preserving original meaning and sentence structure")
+        }
+        "novel" | "auto:novel" => is_dialogue.then_some("natural colloquial dialogue"),
+        "auto:casual" => is_dialogue.then_some("natural casual dialogue"),
+        _ => is_dialogue.then_some("natural colloquial dialogue"),
+    }
+}
+
 fn build_prompt(
     model: &LlamaModel,
     source: &str,
     target_lang: &str,
     style: &str,
     glossary_hint: &str,
-) -> String {
+) -> (String, bool) {
     let target = normalize_target_lang(target_lang);
-    let tone_hint = match style.trim().to_ascii_lowercase().as_str() {
-        "literal" => "Translate accurately and closely to the source wording.",
-        "novel" => "Use vivid literary prose matching dialogue register and tone.",
-        "polished" => "Translate cleanly in a refined editorial style.",
-        "natural" => "Translate naturally and idiomatically.",
-        _ => "Choose the clearest natural tone fitting the context (auto).",
-    };
-    let glossary_section = if glossary_hint.trim().is_empty() {
-        String::new()
+    let tmpl_raw = model
+        .meta_val_str("tokenizer.chat_template")
+        .unwrap_or_default();
+    let uses_hy_template =
+        tmpl_raw.is_empty() || tmpl_raw.contains("hy_User") || tmpl_raw.contains("hy_Assistant");
+
+    let is_dialogue = is_dialogue_segment(source);
+    let style_clause = hy_mt2_style_tag(style, is_dialogue)
+        .map(|tag| format!(" Style: [{tag}]."))
+        .unwrap_or_default();
+    let is_zh_pair =
+        matches!(target, "Chinese" | "Traditional Chinese") || source_is_chinese(source);
+    let use_zh_template = is_zh_pair && style_clause.is_empty();
+
+    let mut sections: Vec<String> = Vec::new();
+    if !glossary_hint.trim().is_empty() {
+        let mut lines = Vec::new();
+        lines.push(if use_zh_template {
+            "参考下面的翻译：".to_string()
+        } else {
+            "Reference the following translations:".to_string()
+        });
+        for raw_line in glossary_hint.lines().take(12) {
+            let trimmed = raw_line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((src, tgt)) = trimmed.split_once("->") {
+                let s = src.trim();
+                let mut t = tgt.trim();
+                if let Some(pos) = t.find("(do NOT translate") {
+                    t = t[..pos].trim();
+                }
+                if use_zh_template {
+                    lines.push(format!("{s} 翻译成 {t}"));
+                } else {
+                    lines.push(format!("\"{s}\" translates to \"{t}\""));
+                }
+            } else {
+                lines.push(trimmed.to_string());
+            }
+        }
+        sections.push(lines.join("\n"));
+    }
+
+    let has_markers = source.contains("[[") && source.contains("]]");
+    let has_link_markers = has_markers && source.contains('|');
+    let has_img_markers = source.contains("[[img");
+
+    if use_zh_template {
+        let zh_lang = hy_mt2_zh_language_name(target);
+        let marker_clause_zh = if has_link_markers && has_img_markers {
+            "，原样保留 [[0|...]] 和 [[img0]] 标记"
+        } else if has_link_markers {
+            "，原样保留 [[0|...]] 标记"
+        } else if has_img_markers {
+            "，原样保留 [[img0]] 标记"
+        } else if has_markers {
+            "，原样保留 [[0|...]] 标记"
+        } else {
+            ""
+        };
+        sections.push(format!(
+            "将以下文本翻译为{zh_lang}{marker_clause_zh}，注意只需要输出翻译后的结果，不要额外解释：\n\n{source}"
+        ));
     } else {
-        format!(
-            "\nMandatory Glossary (apply strictly):\n{}\n",
-            glossary_hint.trim()
-        )
-    };
-    let user_prompt = format!(
-        "Translate the following segment into {target}, preserving inline link/media tags like [[1|text]] or [[img1]] verbatim. Output ONLY the translated text.\nStyle: {tone_hint}{glossary_section}\n\n{source}"
-    );
+        let marker_clause = if has_link_markers && has_img_markers {
+            ", preserving [[0|...]] and [[img0]] markers intact"
+        } else if has_link_markers {
+            ", preserving [[0|...]] markers intact"
+        } else if has_img_markers {
+            ", preserving [[img0]] markers intact"
+        } else if has_markers {
+            ", preserving [[0|...]] markers intact"
+        } else {
+            ""
+        };
+        sections.push(format!(
+            "Translate the following segment into {target}{marker_clause}, without additional explanation.{style_clause}\n\n{source}"
+        ));
+    }
+
+    let user_prompt = sections.join("\n\n");
+    if uses_hy_template {
+        return (
+            format!("<｜hy_begin▁of▁sentence｜><｜hy_User｜>{user_prompt}<｜hy_Assistant｜>"),
+            true,
+        );
+    }
     if let Ok(tmpl) = model.chat_template(None) {
         if let Ok(msg) = LlamaChatMessage::new("user".to_string(), user_prompt.clone()) {
             if let Ok(rendered) = model.apply_chat_template(&tmpl, &[msg], true) {
                 if !rendered.trim().is_empty() {
-                    return rendered;
+                    return (rendered, false);
                 }
             }
         }
     }
-    format!("<｜hy_begin▁of▁sentence｜><｜hy_User｜>{user_prompt}<｜hy_Assistant｜>")
+    (
+        format!("<｜hy_begin▁of▁sentence｜><｜hy_User｜>{user_prompt}<｜hy_Assistant｜>"),
+        true,
+    )
 }
 
 fn clean_translation_output(raw: &str) -> String {
-    let mut s = raw.trim().to_string();
+    let mut s = raw
+        .replace("<｜hy_place▁holder▁no▁2｜>", "")
+        .replace("<｜hy_EOT｜>", "")
+        .replace("<｜hy_Assistant｜>", "")
+        .replace("<｜hy_begin▁of▁sentence｜>", "")
+        .replace("<｜hy_end▁of▁sentence｜>", "")
+        .replace("<|im_end|>", "")
+        .replace("<|eot_id|>", "")
+        .replace("<end_of_turn>", "")
+        .replace("[|endofturn|]", "");
     if let Some(end_think) = s.find("</think>") {
-        s = s[end_think + "</think>".len()..].trim().to_string();
+        s = s[end_think + "</think>".len()..].to_string();
     }
     for stop in ["<｜hy_User｜>", "<｜end▁of▁sentence｜>", "<|endoftext|>"] {
         if let Some(pos) = s.find(stop) {
-            s = s[..pos].trim().to_string();
+            s = s[..pos].to_string();
         }
     }
-    s
+    for marker in [
+        "[출처 텍스트]",
+        "[Source Text]",
+        "[원문 텍스트]",
+        "[原文]",
+        "[번역 결과]",
+        "[번역문]",
+        "[译文]",
+    ] {
+        if let Some(pos) = s.rfind(marker) {
+            let after = s[pos + marker.len()..].trim();
+            if !after.is_empty() {
+                s = after.to_string();
+                break;
+            }
+        }
+    }
+    let mut kept = Vec::new();
+    for line in s.lines() {
+        let mut l = line.trim();
+        let lower = l.to_ascii_lowercase();
+        if lower.starts_with("style:")
+            || lower.starts_with("note:")
+            || lower.starts_with("translate the following segment")
+            || lower.starts_with("output only")
+        {
+            continue;
+        }
+        for header in [
+            "[Source Text]",
+            "[Translation]",
+            "Translation:",
+            "Korean translation:",
+            "English translation:",
+            "Japanese translation:",
+            "Chinese translation:",
+            "译文：",
+            "译文:",
+            "翻译结果：",
+            "翻译结果:",
+            "日本語訳：",
+            "日本語訳:",
+        ] {
+            if let Some(rest) = l.strip_prefix(header) {
+                l = rest.trim();
+            }
+        }
+        if !l.is_empty() {
+            kept.push(l);
+        }
+    }
+    if kept.is_empty() {
+        s.trim().to_string()
+    } else {
+        kept.join("\n").trim().to_string()
+    }
 }
 
 fn translate_with_model(
@@ -145,10 +335,11 @@ fn translate_with_model(
     if source.trim().is_empty() {
         return Ok(source.to_string());
     }
-    let prompt = build_prompt(&loaded.model, source, target_lang, style, glossary_hint);
-    let uses_hy_template = prompt.starts_with("<｜hy_begin▁of▁sentence｜>");
+    let (prompt, uses_hy_template) =
+        build_prompt(&loaded.model, source, target_lang, style, glossary_hint);
     let vocab = loaded.model.vocab();
-    let tokens = vocab.tokenize(prompt.as_bytes(), !uses_hy_template, true);
+    let parse_special = prompt.contains("<｜hy_") || prompt.contains("<|") || prompt.contains("[|");
+    let tokens = vocab.tokenize(prompt.as_bytes(), !uses_hy_template, parse_special);
     if tokens.is_empty() {
         return Ok(source.to_string());
     }
@@ -191,11 +382,17 @@ fn translate_with_model(
             .map_err(|e| format!("Prompt decode failed: {e}"))?;
     }
 
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::penalties(vocab.n_tokens(), 64, 1.05, 0.0, 0.0),
-        LlamaSampler::temp(0.2),
-        LlamaSampler::dist(42),
-    ]);
+    let mut sampler = if style.trim().eq_ignore_ascii_case("polished") {
+        LlamaSampler::chain_simple([
+            LlamaSampler::penalties(vocab.n_tokens(), 64, 1.01, 0.0, 0.0),
+            LlamaSampler::top_k(20),
+            LlamaSampler::top_p(0.80, 1),
+            LlamaSampler::temp(0.22),
+            LlamaSampler::dist(42),
+        ])
+    } else {
+        LlamaSampler::greedy()
+    };
 
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut piece_buf = Vec::<u8>::with_capacity(32);

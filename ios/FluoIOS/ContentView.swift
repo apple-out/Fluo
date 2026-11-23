@@ -469,9 +469,15 @@ struct ContentView: View {
                     })
                     .presentationDetents([.medium, .large])
                 case .bookmarks:
-                    BookmarksSheet(store: store, onEdit: { item in
-                        openBookmarkEditor(for: item)
-                    })
+                    BookmarksSheet(
+                        store: store,
+                        onEdit: { item in
+                            openBookmarkEditor(for: item)
+                        },
+                        onAddCurrent: store.activeTab.isStartPage ? nil : {
+                            openBookmarkEditor(for: store.currentBookmark())
+                        }
+                    )
                 case .bookmarkEditor:
                     BookmarkEditorSheet(store: store, existing: editingBookmark)
                         .presentationDetents([.medium])
@@ -572,7 +578,7 @@ struct ContentView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach([".com", ".kr", "/", "https://", "@namu ", "@naver ", "@yt "], id: \.self) { token in
+                    ForEach([".com", ".org", "/", "https://", "@wiki ", "@yt ", "@g "], id: \.self) { token in
                         Button {
                             if token.hasPrefix("@") {
                                 urlDraft = token + urlDraft
@@ -773,13 +779,7 @@ struct ContentView: View {
                 tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
             )
             .contentShape(Capsule())
-            .onTapGesture(count: 2) {
-                guard collapsed else { return }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                store.activeTab.scrollToTop()
-                store.isDockCollapsed = false
-            }
-            .onTapGesture(count: 1) {
+            .onTapGesture {
                 guard collapsed else { return }
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 store.isDockCollapsed = false
@@ -790,6 +790,7 @@ struct ContentView: View {
             LiquidGlassGroup(spacing: 10) {
                 HStack(spacing: 0) {
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         store.activeTab.goBackFromCurrent()
                     } label: {
                         Image(systemName: "chevron.left")
@@ -805,11 +806,19 @@ struct ContentView: View {
                         backForwardContextMenu(
                             items: Array(store.activeTab.webView.backForwardList.backList.reversed().prefix(8))
                         )
+                        if store.activeTab.cameFromStartPage && !store.activeTab.isStartPage {
+                            Button {
+                                store.activeTab.openStartPage()
+                            } label: {
+                                Label(t("start.title"), systemImage: "house")
+                            }
+                        }
                     }
 
                     Spacer(minLength: 4)
 
                     Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
                         store.activeTab.goForwardFromCurrent()
                     } label: {
                         Image(systemName: "chevron.right")
@@ -870,9 +879,9 @@ struct ContentView: View {
                     Spacer(minLength: 4)
 
                     Button {
-                        openBookmarkEditor(for: store.currentBookmark())
+                        activeSheet = .bookmarks
                     } label: {
-                        Image(systemName: store.isCurrentPageBookmarked ? "star.fill" : "star")
+                        Image(systemName: store.isCurrentPageBookmarked ? "star.fill" : "book")
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(store.isCurrentPageBookmarked ? .white : .primary)
                             .frame(width: 40, height: 40)
@@ -884,8 +893,24 @@ struct ContentView: View {
                         interactive: true,
                         prominent: store.isCurrentPageBookmarked
                     )
-                    .disabled(store.activeTab.isStartPage)
-                    .opacity(store.activeTab.isStartPage ? 0.38 : 1.0)
+                    .accessibilityLabel(t("bm.title"))
+                    .contextMenu {
+                        if !store.activeTab.isStartPage {
+                            Button {
+                                openBookmarkEditor(for: store.currentBookmark())
+                            } label: {
+                                Label(
+                                    store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
+                                    systemImage: "star"
+                                )
+                            }
+                            Button {
+                                store.addCurrentPageToReadingList()
+                            } label: {
+                                Label(t("menu.readingListAdd"), systemImage: "eyeglasses")
+                            }
+                        }
+                    }
 
                     Spacer(minLength: 4)
 
@@ -926,6 +951,6 @@ struct ContentView: View {
         .offset(x: dockDragOffset)
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
-        .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.86), value: store.isDockCollapsed)
+        .animation(.interactiveSpring(response: 0.22, dampingFraction: 0.88), value: store.isDockCollapsed)
     }
 }

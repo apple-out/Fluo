@@ -148,12 +148,10 @@ struct QuickShortcutItem: Identifiable, Codable, Hashable {
     var tintHex: String
 
     static let defaults: [QuickShortcutItem] = [
-        QuickShortcutItem(id: "namu", title: "나무위키", urlString: "https://namu.wiki", icon: "book.pages.fill", tintHex: "#00A495"),
+        QuickShortcutItem(id: "google", title: "Google", urlString: "https://www.google.com", icon: "magnifyingglass.circle.fill", tintHex: "#4285F4"),
         QuickShortcutItem(id: "wikipedia", title: "Wikipedia", urlString: "https://en.wikipedia.org", icon: "globe.americas.fill", tintHex: "#3B82F6"),
-        QuickShortcutItem(id: "nhk", title: "NHK News", urlString: "https://www3.nhk.or.jp/news/", icon: "newspaper.fill", tintHex: "#EC4899"),
-        QuickShortcutItem(id: "hackernews", title: "Hacker News", urlString: "https://news.ycombinator.com", icon: "bolt.horizontal.circle.fill", tintHex: "#F97316"),
-        QuickShortcutItem(id: "syosetu", title: "小説家になろう", urlString: "https://syosetu.com", icon: "text.book.closed.fill", tintHex: "#8B5CF6"),
-        QuickShortcutItem(id: "github", title: "GitHub", urlString: "https://github.com/trending", icon: "chevron.left.forwardslash.chevron.right", tintHex: "#10B981"),
+        QuickShortcutItem(id: "github", title: "GitHub", urlString: "https://github.com", icon: "chevron.left.forwardslash.chevron.right", tintHex: "#10B981"),
+        QuickShortcutItem(id: "youtube", title: "YouTube", urlString: "https://www.youtube.com", icon: "play.rectangle.fill", tintHex: "#EF4444"),
     ]
 }
 
@@ -219,7 +217,13 @@ struct FluoUserDataSnapshot: Codable {
         adBlockAllowlist = try c.decodeIfPresent([String].self, forKey: .adBlockAllowlist) ?? def.adBlockAllowlist
         savedTabs = try c.decodeIfPresent([SavedTabItem].self, forKey: .savedTabs) ?? []
         activeSavedTabId = try c.decodeIfPresent(String.self, forKey: .activeSavedTabId)
-        customShortcuts = try c.decodeIfPresent([QuickShortcutItem].self, forKey: .customShortcuts) ?? QuickShortcutItem.defaults
+        let decodedShortcuts = try c.decodeIfPresent([QuickShortcutItem].self, forKey: .customShortcuts) ?? QuickShortcutItem.defaults
+        let legacyPersonalIds = ["namu", "wikipedia", "nhk", "hackernews", "syosetu", "github"]
+        if decodedShortcuts.map(\.id) == legacyPersonalIds {
+            customShortcuts = QuickShortcutItem.defaults
+        } else {
+            customShortcuts = decodedShortcuts
+        }
         downloads = try c.decodeIfPresent([DownloadItemRecord].self, forKey: .downloads) ?? []
         autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
         autoTranslateHosts = try c.decodeIfPresent([String].self, forKey: .autoTranslateHosts) ?? []

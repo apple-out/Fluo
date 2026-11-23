@@ -388,86 +388,104 @@ struct TabsSheet: View {
                 LiquidAuroraBackground()
 
                 VStack(spacing: 10) {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LiquidGlassGroup(spacing: 8) {
-                            HStack(spacing: 8) {
-                                ForEach(store.userData.workspaces) { ws in
-                                    let active = store.userData.activeWorkspaceId == ws.id
-                                    Button {
-                                        store.switchWorkspace(ws.id)
-                                    } label: {
-                                        Text(ws.name)
-                                            .font(.caption.weight(.bold))
-                                            .padding(.horizontal, 14)
-                                            .padding(.vertical, 8)
-                                            .foregroundStyle(active ? .white : .primary)
-                                            .contentShape(Capsule())
-                                    }
-                                    .buttonStyle(LiquidPressButtonStyle())
-                                    .liquidGlassPill(
-                                        tint: active ? FluoThemeTokens.indigo : .clear,
-                                        interactive: true,
-                                        prominent: active
-                                    )
-                                    .contextMenu {
+                    HStack(spacing: 8) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LiquidGlassGroup(spacing: 8) {
+                                HStack(spacing: 8) {
+                                    ForEach(store.userData.workspaces) { ws in
+                                        let active = store.userData.activeWorkspaceId == ws.id
                                         Button {
-                                            wsTargetId = ws.id
-                                            wsDraftName = ws.name
-                                            showRenameWorkspace = true
+                                            store.switchWorkspace(ws.id)
                                         } label: {
-                                            Label(t("ws.rename"), systemImage: "pencil")
+                                            Text(ws.name)
+                                                .font(.caption.weight(.bold))
+                                                .padding(.horizontal, 14)
+                                                .padding(.vertical, 8)
+                                                .foregroundStyle(active ? .white : .primary)
+                                                .contentShape(Capsule())
                                         }
-                                        if ws.id != "default" {
-                                            Button(role: .destructive) {
-                                                store.deleteWorkspace(ws.id)
+                                        .buttonStyle(LiquidPressButtonStyle())
+                                        .liquidGlassPill(
+                                            tint: active ? FluoThemeTokens.indigo : .clear,
+                                            interactive: true,
+                                            prominent: active
+                                        )
+                                        .contentShape(.contextMenuPreview, Capsule())
+                                        .contextMenu {
+                                            Button {
+                                                wsTargetId = ws.id
+                                                wsDraftName = ws.name
+                                                showRenameWorkspace = true
                                             } label: {
-                                                Label(t("ws.delete"), systemImage: "trash")
+                                                Label(t("ws.rename"), systemImage: "pencil")
+                                            }
+                                            if ws.id != "default" {
+                                                Button(role: .destructive) {
+                                                    store.deleteWorkspace(ws.id)
+                                                } label: {
+                                                    Label(t("ws.delete"), systemImage: "trash")
+                                                }
                                             }
                                         }
                                     }
                                 }
-
-                                Button {
-                                    wsDraftName = ""
-                                    showNewWorkspace = true
-                                } label: {
-                                    Image(systemName: "plus")
-                                        .font(.caption.bold())
-                                        .frame(width: 30, height: 30)
-                                        .contentShape(Circle())
-                                }
-                                .buttonStyle(LiquidPressButtonStyle())
-                                .liquidGlassCircle(interactive: true)
-
-                                if let ws = activeWorkspace {
-                                    Menu {
-                                        Button {
-                                            wsTargetId = ws.id
-                                            wsDraftName = ws.name
-                                            showRenameWorkspace = true
-                                        } label: {
-                                            Label(t("ws.rename"), systemImage: "pencil")
-                                        }
-                                        if ws.id != "default" {
-                                            Button(role: .destructive) {
-                                                store.deleteWorkspace(ws.id)
-                                            } label: {
-                                                Label(t("ws.delete"), systemImage: "trash")
-                                            }
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis")
-                                            .font(.caption.bold())
-                                            .frame(width: 30, height: 30)
-                                            .contentShape(Circle())
-                                    }
-                                    .liquidGlassCircle(interactive: true)
-                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 2)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        Button {
+                            wsDraftName = ""
+                            showNewWorkspace = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.caption.bold())
+                                .frame(width: 32, height: 32)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(LiquidPressButtonStyle())
+                        .liquidGlassCircle(interactive: true)
+
+                        if let ws = activeWorkspace {
+                            Menu {
+                                Button {
+                                    wsTargetId = ws.id
+                                    wsDraftName = ws.name
+                                    showRenameWorkspace = true
+                                } label: {
+                                    Label("\(t("ws.rename")): \(ws.name)", systemImage: "pencil")
+                                }
+                                if ws.id != "default" {
+                                    Button(role: .destructive) {
+                                        store.deleteWorkspace(ws.id)
+                                    } label: {
+                                        Label("\(t("ws.delete")): \(ws.name)", systemImage: "trash")
+                                    }
+                                }
+                                let deletableOthers = store.userData.workspaces.filter { $0.id != "default" && $0.id != ws.id }
+                                if !deletableOthers.isEmpty {
+                                    Divider()
+                                    ForEach(deletableOthers) { other in
+                                        Button(role: .destructive) {
+                                            store.deleteWorkspace(other.id)
+                                        } label: {
+                                            Label("\(t("ws.delete")): \(other.name)", systemImage: "trash")
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis")
+                                    .font(.caption.bold())
+                                    .frame(width: 32, height: 32)
+                                    .contentShape(Circle())
+                            }
+                            .liquidGlassCircle(interactive: true)
+                            .accessibilityLabel(t("ws.manage"))
+                        }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
 
                     List {
                         ForEach(filteredTabs) { tab in
@@ -685,73 +703,75 @@ struct MenuSheet: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        LiquidGlassGroup(spacing: 10) {
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                                quickTile(
-                                    title: store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
-                                    icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
-                                    active: store.isCurrentPageBookmarked
-                                ) {
-                                    openSheet(.bookmarkEditor)
-                                }
-
-                                quickTile(
-                                    title: t("menu.find"),
-                                    icon: "magnifyingglass",
-                                    active: store.showFindBar
-                                ) {
-                                    dismiss()
-                                    store.showFindBar = true
-                                }
-
-                                quickTile(
-                                    title: t("menu.desktop"),
-                                    icon: "desktopcomputer",
-                                    active: store.activeTab.isDesktopMode
-                                ) {
-                                    store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
-                                    dismiss()
-                                }
-
-                                quickTile(
-                                    title: store.currentHost.isEmpty ? t("menu.adblockSite") : store.currentHost,
-                                    icon: "shield.lefthalf.filled",
-                                    active: store.isCurrentHostAdBlockEnabled
-                                ) {
-                                    if !store.currentHost.isEmpty {
-                                        store.toggleCurrentHostAdBlock()
+                        if !store.activeTab.isStartPage {
+                            LiquidGlassGroup(spacing: 10) {
+                                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                                    quickTile(
+                                        title: store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
+                                        icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
+                                        active: store.isCurrentPageBookmarked
+                                    ) {
+                                        openSheet(.bookmarkEditor)
                                     }
-                                    dismiss()
+
+                                    quickTile(
+                                        title: t("menu.find"),
+                                        icon: "magnifyingglass",
+                                        active: store.showFindBar
+                                    ) {
+                                        dismiss()
+                                        store.showFindBar = true
+                                    }
+
+                                    quickTile(
+                                        title: t("menu.desktop"),
+                                        icon: "desktopcomputer",
+                                        active: store.activeTab.isDesktopMode
+                                    ) {
+                                        store.activeTab.applyDesktopMode(!store.activeTab.isDesktopMode)
+                                        dismiss()
+                                    }
+
+                                    quickTile(
+                                        title: store.currentHost.isEmpty ? t("menu.adblockSite") : store.currentHost,
+                                        icon: "shield.lefthalf.filled",
+                                        active: store.isCurrentHostAdBlockEnabled
+                                    ) {
+                                        if !store.currentHost.isEmpty {
+                                            store.toggleCurrentHostAdBlock()
+                                        }
+                                        dismiss()
+                                    }
                                 }
                             }
-                        }
 
-                        VStack(spacing: 0) {
-                            if !store.activeTab.isStartPage, let shareUrl = URL(string: store.activeTab.urlString) {
-                                ShareLink(item: shareUrl) {
-                                    HStack {
-                                        Label(t("menu.share"), systemImage: "square.and.arrow.up")
-                                            .font(.subheadline.weight(.medium))
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
+                            VStack(spacing: 0) {
+                                if let shareUrl = URL(string: BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)) {
+                                    ShareLink(item: shareUrl) {
+                                        HStack {
+                                            Label(t("menu.share"), systemImage: "square.and.arrow.up")
+                                                .font(.subheadline.weight(.medium))
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 14)
+                                        .contentShape(Rectangle())
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                                    .contentShape(Rectangle())
+                                    .buttonStyle(.plain)
+                                    Divider().opacity(0.25)
                                 }
-                                .buttonStyle(.plain)
-                                Divider().opacity(0.25)
 
-                                menuRow(copiedFeedback ? t("menu.copied") : t("menu.copyUrl"), icon: "doc.on.doc") {
-                                    UIPasteboard.general.string = store.activeTab.urlString
+                                menuRow(copiedFeedback ? t("menu.copied") : t("menu.cleanUrl"), icon: "doc.on.doc") {
+                                    UIPasteboard.general.string = BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)
                                     copiedFeedback = true
                                 }
                                 Divider().opacity(0.25)
 
-                                menuRow(t("menu.cleanUrl"), icon: "sparkles") {
-                                    UIPasteboard.general.string = BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)
+                                menuRow(t("menu.readingListAdd"), icon: "eyeglasses") {
+                                    store.addCurrentPageToReadingList()
                                     copiedFeedback = true
                                 }
                                 Divider().opacity(0.25)
@@ -762,23 +782,19 @@ struct MenuSheet: View {
                                 }
                                 Divider().opacity(0.25)
 
-                                menuRow(t("menu.pip"), icon: "pip") {
-                                    dismiss()
-                                    store.togglePictureInPicture()
-                                }
-                                Divider().opacity(0.25)
+                                if store.activeTab.hasMediaOnPage {
+                                    menuRow(t("menu.pip"), icon: "pip") {
+                                        dismiss()
+                                        store.togglePictureInPicture()
+                                    }
+                                    Divider().opacity(0.25)
 
-                                menuRow(t("menu.videoSpeed"), icon: "forward.circle") {
-                                    store.cycleMediaPlaybackRate()
-                                    dismiss()
+                                    menuRow(t("menu.videoSpeed"), icon: "forward.circle") {
+                                        store.cycleMediaPlaybackRate()
+                                        dismiss()
+                                    }
+                                    Divider().opacity(0.25)
                                 }
-                                Divider().opacity(0.25)
-
-                                menuRow(t("menu.smartDark"), icon: "moon.stars") {
-                                    store.toggleSmartDarkPage()
-                                    dismiss()
-                                }
-                                Divider().opacity(0.25)
 
                                 menuRow(t("menu.readerMode"), icon: "doc.text.magnifyingglass") {
                                     store.toggleReaderMode()
@@ -786,9 +802,9 @@ struct MenuSheet: View {
                                 }
                                 Divider().opacity(0.25)
 
-                                menuRow(t("menu.readingListAdd"), icon: "eyeglasses") {
-                                    store.addCurrentPageToReadingList()
-                                    copiedFeedback = true
+                                menuRow(t("menu.smartDark"), icon: "moon.stars") {
+                                    store.toggleSmartDarkPage()
+                                    dismiss()
                                 }
                                 Divider().opacity(0.25)
 
@@ -801,7 +817,7 @@ struct MenuSheet: View {
                                 Divider().opacity(0.25)
 
                                 menuRow(t("menu.qrCode"), icon: "qrcode") {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                    withAnimation(.spring(response: 0.28, dampingFraction: 0.84)) {
                                         showQRCode.toggle()
                                     }
                                 }
@@ -821,65 +837,77 @@ struct MenuSheet: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)
                                 }
-                                Divider().opacity(0.25)
 
-                                menuRow(t("menu.exportMd"), icon: "doc.richtext") {
-                                    Task {
-                                        let md = await store.exportCurrentPageMarkdown()
-                                        UIPasteboard.general.string = md
-                                        copiedFeedback = true
+                                if store.activeTab.displayMode != .original {
+                                    Divider().opacity(0.25)
+                                    menuRow(t("menu.exportMd"), icon: "doc.richtext") {
+                                        Task {
+                                            let md = await store.exportCurrentPageMarkdown()
+                                            UIPasteboard.general.string = md
+                                            copiedFeedback = true
+                                        }
                                     }
                                 }
-                                Divider().opacity(0.25)
-                            }
 
-                            HStack {
-                                Label(t("set.zoom"), systemImage: "textformat.size")
-                                    .font(.subheadline.weight(.medium))
-                                Spacer()
-                                Button {
-                                    store.activeTab.applyPageZoom(store.activeTab.pageZoom - 0.1)
-                                } label: {
-                                    Image(systemName: "minus.circle")
-                                        .font(.title3)
-                                }
-                                .buttonStyle(.plain)
-                                Text("\(Int((store.activeTab.pageZoom * 100).rounded()))%")
-                                    .font(.caption.monospacedDigit().weight(.bold))
-                                    .frame(minWidth: 44)
-                                    .onTapGesture {
-                                        store.activeTab.applyPageZoom(1.0)
+                                Divider().opacity(0.25)
+                                HStack {
+                                    Label(t("set.zoom"), systemImage: "textformat.size")
+                                        .font(.subheadline.weight(.medium))
+                                    Spacer()
+                                    Button {
+                                        store.activeTab.applyPageZoom(store.activeTab.pageZoom - 0.1)
+                                    } label: {
+                                        Image(systemName: "minus.circle")
+                                            .font(.title3)
                                     }
-                                Button {
-                                    store.activeTab.applyPageZoom(store.activeTab.pageZoom + 0.1)
-                                } label: {
-                                    Image(systemName: "plus.circle")
-                                        .font(.title3)
+                                    .buttonStyle(.plain)
+                                    Text("\(Int((store.activeTab.pageZoom * 100).rounded()))%")
+                                        .font(.caption.monospacedDigit().weight(.bold))
+                                        .frame(minWidth: 44)
+                                        .onTapGesture {
+                                            store.activeTab.applyPageZoom(1.0)
+                                        }
+                                    Button {
+                                        store.activeTab.applyPageZoom(store.activeTab.pageZoom + 0.1)
+                                    } label: {
+                                        Image(systemName: "plus.circle")
+                                            .font(.title3)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 11)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 11)
-
-                            Divider().opacity(0.25)
-                            menuRow(t("menu.startPage"), icon: "house") {
-                                store.activeTab.openStartPage()
-                                dismiss()
-                            }
-                            Divider().opacity(0.25)
-                            menuRow(t("menu.bookmarkAll"), icon: "star.square.on.square") {
-                                store.bookmarkAllTabs()
-                                dismiss()
-                            }
-                            if !store.closedTabs.isEmpty {
-                                Divider().opacity(0.25)
-                                menuRow(t("tabs.reopen"), icon: "arrow.uturn.left.circle") {
-                                    store.reopenClosedTab()
-                                    dismiss()
-                                }
-                            }
+                            .liquidGlass(cornerRadius: 22)
                         }
-                        .liquidGlass(cornerRadius: 22)
+
+                        if !store.activeTab.isStartPage || !store.closedTabs.isEmpty || store.activeWorkspaceTabs.count > 1 {
+                            VStack(spacing: 0) {
+                                if !store.activeTab.isStartPage {
+                                    menuRow(t("menu.startPage"), icon: "house") {
+                                        store.activeTab.openStartPage()
+                                        dismiss()
+                                    }
+                                }
+                                if store.activeWorkspaceTabs.contains(where: { !$0.isStartPage }) {
+                                    if !store.activeTab.isStartPage { Divider().opacity(0.25) }
+                                    menuRow(t("menu.bookmarkAll"), icon: "star.square.on.square") {
+                                        store.bookmarkAllTabs()
+                                        dismiss()
+                                    }
+                                }
+                                if !store.closedTabs.isEmpty {
+                                    if !store.activeTab.isStartPage || store.activeWorkspaceTabs.contains(where: { !$0.isStartPage }) {
+                                        Divider().opacity(0.25)
+                                    }
+                                    menuRow(t("tabs.reopen"), icon: "arrow.uturn.left.circle") {
+                                        store.reopenClosedTab()
+                                        dismiss()
+                                    }
+                                }
+                            }
+                            .liquidGlass(cornerRadius: 22)
+                        }
 
                         VStack(spacing: 0) {
                             menuRow(t("menu.bookmarks"), icon: "book") { openSheet(.bookmarks) }
@@ -895,8 +923,10 @@ struct MenuSheet: View {
                         .liquidGlass(cornerRadius: 22)
 
                         VStack(spacing: 0) {
-                            menuRow(t("sec.title"), icon: "lock.shield") { openSheet(.siteSecurity) }
-                            Divider().opacity(0.25)
+                            if !store.activeTab.isStartPage {
+                                menuRow(t("sec.title"), icon: "lock.shield") { openSheet(.siteSecurity) }
+                                Divider().opacity(0.25)
+                            }
                             menuRow(t("menu.feedback"), icon: "ladybug") { openSheet(.feedback) }
                             Divider().opacity(0.25)
                             menuRow(t("menu.settings"), icon: "gearshape") { openSheet(.settings) }
@@ -961,6 +991,7 @@ struct MenuSheet: View {
 struct BookmarksSheet: View {
     @ObservedObject var store: BrowserStore
     var onEdit: (BookmarkItem) -> Void
+    var onAddCurrent: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
 
@@ -1025,6 +1056,15 @@ struct BookmarksSheet: View {
             .searchable(text: $search, prompt: t("bm.search"))
             .navigationTitle(t("bm.title"))
             .toolbar {
+                if let onAddCurrent {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            onAddCurrent()
+                        } label: {
+                            Label(store.isCurrentPageBookmarked ? t("bm.editTitle") : t("bm.addTitle"), systemImage: "plus")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }
@@ -1197,6 +1237,15 @@ struct SiteSecuritySheet: View {
             .navigationTitle(t("sec.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let onAddCurrent {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            onAddCurrent()
+                        } label: {
+                            Label(store.isCurrentPageBookmarked ? t("bm.editTitle") : t("bm.addTitle"), systemImage: "plus")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }
@@ -1450,6 +1499,7 @@ struct GlossarySheet: View {
                                 doNotTranslate = false
                                 noteDraft = ""
                             }
+                            .buttonStyle(.borderless)
                             .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                             if editingId != nil {
@@ -1463,6 +1513,7 @@ struct GlossarySheet: View {
                                     doNotTranslate = false
                                     noteDraft = ""
                                 }
+                                .buttonStyle(.borderless)
                             }
                         }
                     }
@@ -1660,6 +1711,15 @@ struct SelectionResultSheet: View {
             .navigationTitle(t("sel.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let onAddCurrent {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button {
+                            onAddCurrent()
+                        } label: {
+                            Label(store.isCurrentPageBookmarked ? t("bm.editTitle") : t("bm.addTitle"), systemImage: "plus")
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }
@@ -1749,6 +1809,7 @@ struct SettingsSheet: View {
     @State private var geminiKeyDraft = KeychainStore.load(account: "gemini_api_key") ?? ""
     @State private var openAiKeyDraft = KeychainStore.load(account: "openai_api_key") ?? ""
     @State private var showClearedAlert = false
+    @State private var confirmDeleteModelId: String? = nil
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
 
@@ -1802,19 +1863,6 @@ struct SettingsSheet: View {
                             store.savePreferences()
                         }
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(t("set.zoom"))
-                            Spacer()
-                            Text("\(Int((store.activeTab.pageZoom * 100).rounded()))%").foregroundStyle(.secondary)
-                        }
-                        Slider(value: Binding(
-                            get: { store.activeTab.pageZoom },
-                            set: { store.activeTab.applyPageZoom($0) }
-                        ), in: 0.7...1.8, step: 0.1)
-                        .tint(FluoThemeTokens.indigo)
-                    }
-
                     Button(t("set.clearSiteData"), role: .destructive) {
                         Task {
                             await store.clearSiteData()
@@ -1852,7 +1900,7 @@ struct SettingsSheet: View {
                                             .font(.caption)
                                     }
                                 } else if catalog.isInstalled(spec.id) {
-                                    HStack {
+                                    HStack(spacing: 12) {
                                         Button {
                                             store.selectedLocalModel = spec.id
                                             store.savePreferences()
@@ -1861,11 +1909,14 @@ struct SettingsSheet: View {
                                                 t("set.installed"),
                                                 systemImage: store.selectedLocalModel == spec.id ? "checkmark.circle.fill" : "circle"
                                             )
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         }
-                                        Spacer()
+                                        .buttonStyle(.borderless)
+
                                         Button(t("set.delete"), role: .destructive) {
-                                            catalog.deleteModel(spec.id)
+                                            confirmDeleteModelId = spec.id
                                         }
+                                        .buttonStyle(.borderless)
                                         .font(.caption)
                                     }
                                 } else {
@@ -1901,11 +1952,13 @@ struct SettingsSheet: View {
                             Button(t("set.saveKey")) {
                                 KeychainStore.save(account: "gemini_api_key", value: geminiKeyDraft)
                             }
+                            .buttonStyle(.borderless)
                             Spacer()
                             Button(t("set.clearKey"), role: .destructive) {
                                 geminiKeyDraft = ""
                                 KeychainStore.delete(account: "gemini_api_key")
                             }
+                            .buttonStyle(.borderless)
                         }
                     }
                     .listRowBackground(Color.white.opacity(0.08))
@@ -1923,11 +1976,13 @@ struct SettingsSheet: View {
                             Button(t("set.saveKey")) {
                                 KeychainStore.save(account: "openai_api_key", value: openAiKeyDraft)
                             }
+                            .buttonStyle(.borderless)
                             Spacer()
                             Button(t("set.clearKey"), role: .destructive) {
                                 openAiKeyDraft = ""
                                 KeychainStore.delete(account: "openai_api_key")
                             }
+                            .buttonStyle(.borderless)
                         }
                     }
                     .listRowBackground(Color.white.opacity(0.08))
@@ -1971,6 +2026,23 @@ struct SettingsSheet: View {
             }
             .alert(t("set.cleared"), isPresented: $showClearedAlert) {
                 Button(t("common.done"), role: .cancel) {}
+            }
+            .alert(
+                t("set.deleteConfirm"),
+                isPresented: Binding(
+                    get: { confirmDeleteModelId != nil },
+                    set: { if !$0 { confirmDeleteModelId = nil } }
+                )
+            ) {
+                Button(t("common.cancel"), role: .cancel) {
+                    confirmDeleteModelId = nil
+                }
+                Button(t("set.delete"), role: .destructive) {
+                    if let targetId = confirmDeleteModelId {
+                        catalog.deleteModel(targetId)
+                    }
+                    confirmDeleteModelId = nil
+                }
             }
         }
     }

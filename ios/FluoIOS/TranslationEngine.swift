@@ -32,7 +32,7 @@ final class TranslationEngine {
 
     private func makeCacheKey(source: String, targetLanguage: String, style: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
+        return "v2|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
     }
 
     func cachedTranslation(for source: String, targetLanguage: String, style: String) -> String? {

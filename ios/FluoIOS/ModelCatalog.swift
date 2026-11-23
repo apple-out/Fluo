@@ -21,30 +21,21 @@ final class ModelCatalog: NSObject, ObservableObject {
 
     static let specs: [HyModelSpec] = [
         HyModelSpec(
-            id: "Hy-MT2-1.8B-2Bit.gguf",
-            displayName: "Hy-MT2 1.8B (2-Bit · iPhone Recommended)",
-            repo: "tencent/Hy-MT2-1.8B-2bit-GGUF",
-            expectedBytes: 600_534_880,
-            sha256: "dcc33bbae9b28d923c8c76a64f6157840841d26f8774f3dfd770d5fabeeb1cd7",
-            subtitle: "~572 MB · Best fit for standard iPhone RAM & free Apple ID sideloading",
-            recommendedForFreeSigning: true
-        ),
-        HyModelSpec(
-            id: "Hy-MT2-1.8B-1.25Bit.gguf",
-            displayName: "Hy-MT2 1.8B (1.25-Bit · Ultra Light)",
-            repo: "tencent/Hy-MT2-1.8B-1.25Bit-GGUF",
-            expectedBytes: 461_860_800,
-            sha256: "cc497fe8f033b52b3b8b00a7669e9661435432f9d4cd43f7ed24400c01507a93",
-            subtitle: "~440 MB · Minimum footprint for 4 GB RAM iPhones & multitasking",
-            recommendedForFreeSigning: false
-        ),
-        HyModelSpec(
             id: "Hy-MT2-1.8B-Q4_K_M.gguf",
-            displayName: "Hy-MT2 1.8B (Q4_K_M · High Precision)",
+            displayName: "Hy-MT2 1.8B (Q4_K_M · Recommended)",
             repo: "tencent/Hy-MT2-1.8B-GGUF",
             expectedBytes: 1_133_080_448,
             sha256: "dc5f44fcf1fa496ee7ad725982c0c8c553a4de00259b53af84c4b89fb0c06699",
-            subtitle: "~1.05 GB · Highest quality (best with 8 GB Pro iPhones)",
+            subtitle: "~1.05 GB · Standard GGUF · Balanced speed & high translation accuracy",
+            recommendedForFreeSigning: true
+        ),
+        HyModelSpec(
+            id: "Hy-MT2-1.8B-Q6_K.gguf",
+            displayName: "Hy-MT2 1.8B (Q6_K · High Precision)",
+            repo: "tencent/Hy-MT2-1.8B-GGUF",
+            expectedBytes: 1_474_785_120,
+            sha256: "d98fe604dec1f28f58f80d7d560f7177e584d3b8e5835862687660e5ff97cb40",
+            subtitle: "~1.37 GB · Standard GGUF · Highest nuance accuracy (recommended for 8 GB Pro iPhones)",
             recommendedForFreeSigning: false
         ),
     ]

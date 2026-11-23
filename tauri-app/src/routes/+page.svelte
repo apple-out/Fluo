@@ -78,6 +78,7 @@
     imageUrl: string;
     selectedText: string;
     isEditable: boolean;
+    hasMedia: boolean;
   };
 
   const initialOverlay = typeof window === "undefined"
@@ -202,10 +203,8 @@
   const DEFAULT_QUICK_SHORTCUTS: QuickShortcut[] = [
     { id: "google", title: "Google", url: "https://www.google.com/" },
     { id: "wikipedia", title: "Wikipedia", url: "https://en.wikipedia.org/" },
-    { id: "namu", title: "나무위키", url: "https://namu.wiki/" },
     { id: "github", title: "GitHub", url: "https://github.com/" },
-    { id: "nhk", title: "NHK News", url: "https://www3.nhk.or.jp/news/" },
-    { id: "syosetu", title: "小説家になろう", url: "https://syosetu.com/" },
+    { id: "youtube", title: "YouTube", url: "https://www.youtube.com/" },
   ];
   let quickShortcuts = $state<QuickShortcut[]>(DEFAULT_QUICK_SHORTCUTS);
   let showAddShortcutForm = $state(false);
@@ -229,7 +228,14 @@
       const rawShortcuts = localStorage.getItem("fluo-custom-shortcuts");
       if (rawShortcuts) {
         const parsed = JSON.parse(rawShortcuts);
-        if (Array.isArray(parsed) && parsed.length > 0) quickShortcuts = parsed;
+        const legacyIds = ["google", "wikipedia", "namu", "github", "nhk", "syosetu"].join(",");
+        if (
+          Array.isArray(parsed) &&
+          parsed.length > 0 &&
+          parsed.map((item: { id?: string }) => item?.id ?? "").join(",") !== legacyIds
+        ) {
+          quickShortcuts = parsed;
+        }
       }
       const rawAutoHosts = localStorage.getItem("fluo-auto-translate-hosts");
       if (rawAutoHosts) {
@@ -2558,6 +2564,7 @@
         imageUrl?: string;
         selectedText?: string;
         isEditable?: boolean;
+        hasMedia?: boolean;
         origin?: string;
         username?: string;
         password?: string;
@@ -2645,6 +2652,7 @@
           imageUrl: msg.imageUrl ?? "",
           selectedText: msg.selectedText ?? "",
           isEditable: Boolean(msg.isEditable),
+          hasMedia: Boolean(msg.hasMedia),
         };
         overlayAnchor = { left: cx, top: cy, right: cx, bottom: cy };
         overlayChromeTop = headerHeight;
@@ -2959,6 +2967,7 @@
               imageUrl: action.imageUrl ?? "",
               selectedText: action.selectedText ?? "",
               isEditable: Boolean(action.isEditable),
+              hasMedia: Boolean(action.hasMedia),
             };
             void openOverlay("page-menu", { left: cx, top: cy, right: cx, bottom: cy });
             return;
@@ -3936,6 +3945,7 @@
             imageUrl: "",
             selectedText: pageMenuContext?.selectedText ?? "",
             isEditable: false,
+            hasMedia: false,
           };
           overlayAnchor = {
             left: event.clientX,
@@ -4536,19 +4546,11 @@
           </button>
           <button
             onclick={() => {
-              void copyCurrentUrl();
-              void closeOverlay();
-            }}
-          >
-            <span>{t("chrome.copyUrlTitle")}</span>
-          </button>
-          <button
-            onclick={() => {
               void copyCleanCurrentUrl();
               void closeOverlay();
             }}
           >
-            <span>✨ {trLocal("깨끗한 주소 복사 (추적 제거)", "Copy Clean URL (No Trackers)", "クリーンURLをコピー (追跡除去)", "复制干净网址 (移除追踪)")}</span>
+            <span>✨ {trLocal("주소 복사 (추적 파라미터 제거)", "Copy Clean URL (No Trackers)", "クリーンURLをコピー (追跡除去)", "复制干净网址 (移除追踪)")}</span>
           </button>
           <button
             onclick={() => {
@@ -4560,20 +4562,22 @@
           >
             <span>🔊 {trLocal("소리 내어 읽기 (TTS)", "Read Aloud (TTS)", "音声読み上げ (TTS)", "语音朗读 (TTS)")}</span>
           </button>
-          <button
-            onclick={() => {
-              void closeOverlay().then(() => api.runPageContextAction("pip"));
-            }}
-          >
-            <span>📺 {trLocal("동영상 PIP (화면 속 화면)", "Picture-in-Picture (PiP)", "ピクチャ・イン・ピクチャ (PiP)", "画中画模式 (PiP)")}</span>
-          </button>
-          <button
-            onclick={() => {
-              void closeOverlay().then(() => api.runPageContextAction("media-rate", "cycle"));
-            }}
-          >
-            <span>⏩ {trLocal("동영상 배속 전환 (1.0x~2.0x)", "Cycle Video Speed (1.0x–2.0x)", "動画再生速度を切替 (1.0x〜2.0x)", "切换视频倍速 (1.0x–2.0x)")}</span>
-          </button>
+          {#if pageMenuContext?.hasMedia}
+            <button
+              onclick={() => {
+                void closeOverlay().then(() => api.runPageContextAction("pip"));
+              }}
+            >
+              <span>📺 {trLocal("동영상 PIP (화면 속 화면)", "Picture-in-Picture (PiP)", "ピクチャ・イン・ピクチャ (PiP)", "画中画模式 (PiP)")}</span>
+            </button>
+            <button
+              onclick={() => {
+                void closeOverlay().then(() => api.runPageContextAction("media-rate", "cycle"));
+              }}
+            >
+              <span>⏩ {trLocal("동영상 배속 전환 (1.0x~2.0x)", "Cycle Video Speed (1.0x–2.0x)", "動画再生速度を切替 (1.0x〜2.0x)", "切换视频倍速 (1.0x–2.0x)")}</span>
+            </button>
+          {/if}
           <button
             onclick={() => {
               void closeOverlay().then(() => api.runPageContextAction("toggle-dark-page"));

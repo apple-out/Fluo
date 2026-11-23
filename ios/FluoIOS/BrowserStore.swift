@@ -58,6 +58,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     @Published var displayMode: InlineDisplayMode = .original
     @Published var pageErrorText: String? = nil
     @Published var detectedLanguage: String = "unknown"
+    @Published var hasMediaOnPage: Bool = false
 
     var lastActiveAt: Date = Date()
     var cameFromStartPage: Bool = false
@@ -79,6 +80,8 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     private var obsLoading: NSKeyValueObservation?
     private var obsTitle: NSKeyValueObservation?
     private var obsUrl: NSKeyValueObservation?
+    private var obsCanGoBack: NSKeyValueObservation?
+    private var obsCanGoForward: NSKeyValueObservation?
     private let refreshControl = UIRefreshControl()
     private var panAnchorY: CGFloat = 0
 
@@ -129,8 +132,12 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
       setTimeout(() => {
         if (location.protocol === "http:" || location.protocol === "https:") {
           post({ type: "page-language-detected", lang: window.__fluoDetectLanguage(), url: location.href });
+          post({ type: "media-presence", hasMedia: document.querySelectorAll("video, audio").length > 0 });
         }
       }, 600);
+      document.addEventListener("loadedmetadata", () => {
+        post({ type: "media-presence", hasMedia: document.querySelectorAll("video, audio").length > 0 });
+      }, true);
 
       let dynObs = null;
       let dynTimer = 0;
@@ -241,6 +248,22 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                 self.canGoForward = wv.canGoForward
             }
         }
+        obsCanGoBack = webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in
+            Task { @MainActor in
+                guard let self, !self.isStartPage, !self.isSleeping else { return }
+                self.canGoBack = wv.canGoBack || self.cameFromStartPage
+            }
+        }
+        obsCanGoForward = webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in
+            Task { @MainActor in
+                guard let self, !self.isSleeping else { return }
+                if self.isStartPage {
+                    self.canGoForward = wv.url != nil && wv.url?.absoluteString != "about:blank"
+                } else {
+                    self.canGoForward = wv.canGoForward
+                }
+            }
+        }
         if !deferLoad && initialURL.absoluteString != FluoUserDataSnapshot.startPageURL {
             webView.load(URLRequest(url: initialURL))
         }
@@ -331,8 +354,10 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         }
         if let target = Self.resolveInputToURL(trimmed, searchEngine: searchEngine) {
             displayMode = .original
+            hasMediaOnPage = false
             urlString = target.absoluteString
-            canGoBack = webView.canGoBack || webView.url != nil
+            canGoBack = webView.canGoBack || cameFromStartPage
+            canGoForward = webView.canGoForward
             webView.load(URLRequest(url: target))
         }
     }
@@ -340,6 +365,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     func openStartPage() {
         webView.stopLoading()
         isSleeping = false
+        hasMediaOnPage = false
         pageErrorText = nil
         cameFromStartPage = true
         displayMode = .original
@@ -363,11 +389,12 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     func goForwardFromCurrent() {
         pageErrorText = nil
         if isStartPage, let wvUrl = webView.url, wvUrl.absoluteString != "about:blank" {
+            displayMode = .original
             urlString = wvUrl.absoluteString
             title = webView.title ?? (wvUrl.host ?? "Fluo")
-            canGoBack = true
+            canGoBack = webView.canGoBack || cameFromStartPage
             canGoForward = webView.canGoForward
-        } else {
+        } else if webView.canGoForward {
             webView.goForward()
         }
     }
@@ -492,6 +519,14 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         return .allow
     }
 
+    nonisolated func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        Task { @MainActor in
+            guard !self.isStartPage, !self.isSleeping else { return }
+            self.canGoBack = webView.canGoBack || self.cameFromStartPage
+            self.canGoForward = webView.canGoForward
+        }
+    }
+
     nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         Task { @MainActor in
             self.pageErrorText = nil
@@ -502,6 +537,10 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
             }
             if abs(self.pageZoom - 1.0) > 0.01 {
                 self.applyPageZoom(self.pageZoom)
+            }
+            if !self.isStartPage {
+                self.canGoBack = webView.canGoBack || self.cameFromStartPage
+                self.canGoForward = webView.canGoForward
             }
             self.onPageFinishedLoad?(self)
         }
@@ -601,7 +640,13 @@ final class BrowserStore: ObservableObject {
         self.onboardingCompleted = UserDefaults.standard.bool(forKey: "fluo.onboardingDone")
         let savedProv = UserDefaults.standard.string(forKey: "fluo.provider").flatMap(AiProviderKind.init(rawValue:)) ?? .hyMt2
         self.provider = savedProv
-        self.selectedLocalModel = UserDefaults.standard.string(forKey: "fluo.selectedModel") ?? ModelCatalog.specs[0].id
+        let savedModel = UserDefaults.standard.string(forKey: "fluo.selectedModel")
+        if let savedModel, ModelCatalog.specs.contains(where: { $0.id == savedModel }) {
+            self.selectedLocalModel = savedModel
+        } else {
+            self.selectedLocalModel = ModelCatalog.specs[0].id
+            UserDefaults.standard.set(ModelCatalog.specs[0].id, forKey: "fluo.selectedModel")
+        }
         self.geminiModel = UserDefaults.standard.string(forKey: "fluo.geminiModel") ?? "gemini-2.5-flash"
         self.openAiBaseUrl = UserDefaults.standard.string(forKey: "fluo.openAiBaseUrl") ?? "https://api.openai.com/v1"
         self.openAiModel = UserDefaults.standard.string(forKey: "fluo.openAiModel") ?? "gpt-4.1-mini"
@@ -758,6 +803,8 @@ final class BrowserStore: ObservableObject {
             let lang = (payload["lang"] as? String) ?? "unknown"
             tab.detectedLanguage = lang
             evaluateAutoTranslatePolicy(for: tab, detectedLang: lang)
+        case "media-presence":
+            tab.hasMediaOnPage = (payload["hasMedia"] as? Bool) ?? false
         case "dynamic-blocks-added":
             if tab.displayMode != .original && !isTranslating {
                 translateActiveTab(bilingual: tab.displayMode == .bilingual)
