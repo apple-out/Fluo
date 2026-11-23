@@ -710,6 +710,34 @@
     }
   }
 
+  function stripTrackingParams(rawUrl: string): string {
+    try {
+      const parsed = new URL(rawUrl);
+      const trackKeys = new Set([
+        "fbclid",
+        "gclid",
+        "yclid",
+        "msclkid",
+        "igshid",
+        "mc_cid",
+        "mc_eid",
+        "_ga",
+        "_gl",
+        "ref_src",
+        "si",
+      ]);
+      for (const key of [...parsed.searchParams.keys()]) {
+        const lower = key.toLowerCase();
+        if (lower.startsWith("utm_") || trackKeys.has(lower)) {
+          parsed.searchParams.delete(key);
+        }
+      }
+      return parsed.toString();
+    } catch {
+      return rawUrl;
+    }
+  }
+
   async function copyCurrentUrl() {
     if (!activeTab?.url) return;
     try {
@@ -718,6 +746,53 @@
     } catch (cause) {
       notify("error", errorMessage(cause));
     }
+  }
+
+  async function copyCleanCurrentUrl(targetUrl?: string) {
+    const raw = targetUrl ?? activeTab?.url;
+    if (!raw) return;
+    try {
+      const cleaned = stripTrackingParams(raw);
+      await navigator.clipboard.writeText(cleaned);
+      notify(
+        "success",
+        trLocal(
+          "추적 파라미터가 제거된 깨끗한 주소를 복사했습니다.",
+          "Copied clean URL without tracking parameters.",
+          "追跡パラメータを除去したURLをコピーしました。",
+          "已复制移除追踪参数的干净网址。",
+        ),
+      );
+    } catch (cause) {
+      notify("error", errorMessage(cause));
+    }
+  }
+
+  async function deduplicateWorkspaceTabs() {
+    const seen = new Set<string>();
+    const activeId = browser.activeTab;
+    const wsTabs = browser.tabs.filter((t) => t.workspaceId === browser.activeWorkspace);
+    if (activeId) {
+      const cur = wsTabs.find((t) => t.id === activeId);
+      if (cur) seen.add(stripTrackingParams(cur.url));
+    }
+    let closedCount = 0;
+    for (const tab of wsTabs) {
+      if (tab.id === activeId || tab.pinned) continue;
+      const key = stripTrackingParams(tab.url);
+      if (seen.has(key)) {
+        await closeTab(tab.id);
+        closedCount++;
+      } else {
+        seen.add(key);
+      }
+    }
+    notify(
+      "info",
+      closedCount > 0
+        ? trLocal(`중복 탭 ${closedCount}개를 정리했습니다.`, `Closed ${closedCount} duplicate tab(s).`, `重複タブを${closedCount}件整理しました。`, `已清理 ${closedCount} 个重复标签页。`)
+        : trLocal("중복된 탭이 없습니다.", "No duplicate tabs found.", "重複しているタブはありません。", "没有发现重复的标签页。"),
+    );
   }
 
   async function bookmarkAllTabs() {
@@ -4368,6 +4443,14 @@
           </button>
           <button
             onclick={() => {
+              void copyCleanCurrentUrl();
+              void closeOverlay();
+            }}
+          >
+            <span>✨ {trLocal("깨끗한 주소 복사 (추적 제거)", "Copy Clean URL (No Trackers)", "クリーンURLをコピー (追跡除去)", "复制干净网址 (移除追踪)")}</span>
+          </button>
+          <button
+            onclick={() => {
               void closeOverlay().then(() => {
                 ttsActive = true;
                 return api.runPageContextAction("tts-toggle");
@@ -4382,6 +4465,27 @@
             }}
           >
             <span>📺 {trLocal("동영상 PIP (화면 속 화면)", "Picture-in-Picture (PiP)", "ピクチャ・イン・ピクチャ (PiP)", "画中画模式 (PiP)")}</span>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("media-rate", "cycle"));
+            }}
+          >
+            <span>⏩ {trLocal("동영상 배속 전환 (1.0x~2.0x)", "Cycle Video Speed (1.0x–2.0x)", "動画再生速度を切替 (1.0x〜2.0x)", "切换视频倍速 (1.0x–2.0x)")}</span>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("toggle-dark-page"));
+            }}
+          >
+            <span>🌙 {trLocal("웹페이지 야간 다크 반전", "Smart Dark Page Mode", "ページのダーク反転切替", "网页夜间深色反色")}</span>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("scroll-top"));
+            }}
+          >
+            <span>↑ {trLocal("페이지 맨 위로 이동", "Scroll to Top", "ページの先頭へ移動", "回到页面顶部")}</span>
           </button>
           <button
             onclick={() => {
@@ -4423,6 +4527,12 @@
             {/if}
             <button onclick={() => { void duplicateTab(menuTab.id).then(() => closeOverlay()); }}>
               <span>{t("tabMenu.duplicate")}</span>
+            </button>
+            <button onclick={() => { void copyCleanCurrentUrl(menuTab.url).then(() => closeOverlay()); }}>
+              <span>✨ {trLocal("이 탭 깨끗한 주소 복사", "Copy Clean Tab URL", "このタブのクリーンURLをコピー", "复制此标签页干净网址")}</span>
+            </button>
+            <button onclick={() => { void deduplicateWorkspaceTabs().then(() => closeOverlay()); }}>
+              <span>🧹 {trLocal("중복 탭 정리", "Close Duplicate Tabs", "重複タブを整理", "清理重复标签页")}</span>
             </button>
             <button onclick={() => { void reopenClosedTab().then(() => closeOverlay()); }}>
               <span>{t("menu.reopenClosed")}</span><kbd>Ctrl+Shift+T</kbd>

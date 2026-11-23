@@ -302,9 +302,17 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
             }
         }
 
-        if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
+        let lowerTrimmed = trimmed.lowercased()
+        if lowerTrimmed.hasPrefix("javascript:")
+            || lowerTrimmed.hasPrefix("data:")
+            || lowerTrimmed.hasPrefix("vbscript:")
+            || lowerTrimmed.hasPrefix("file:") {
+            return searchEngine.searchURL(query: trimmed)
+        }
+
+        if lowerTrimmed.hasPrefix("http://") || lowerTrimmed.hasPrefix("https://") {
             return URL(string: trimmed)
-        } else if trimmed.contains(".") && !trimmed.contains(" ") {
+        } else if trimmed.contains(".") && !trimmed.contains(" ") && !trimmed.contains(":") {
             return URL(string: "https://\(trimmed)")
         } else {
             return searchEngine.searchURL(query: trimmed)
@@ -1128,6 +1136,42 @@ final class BrowserStore: ObservableObject {
         persistUserData()
     }
 
+    func deduplicateTabsInCurrentWorkspace() {
+        let wsId = userData.activeWorkspaceId
+        var seen = Set<String>()
+        if activeTab.workspaceId == wsId && !activeTab.isStartPage {
+            seen.insert(Self.cleanURLWithoutTrackers(activeTab.urlString))
+        }
+        var toClose: [UUID] = []
+        for tab in tabs where tab.workspaceId == wsId && tab.id != activeTabId && !tab.isPinned && !tab.isStartPage {
+            let key = Self.cleanURLWithoutTrackers(tab.urlString)
+            if seen.contains(key) {
+                toClose.append(tab.id)
+            } else {
+                seen.insert(key)
+            }
+        }
+        for id in toClose {
+            closeTab(id)
+        }
+    }
+
+    static func cleanURLWithoutTrackers(_ rawURL: String) -> String {
+        guard var comp = URLComponents(string: rawURL), let items = comp.queryItems, !items.isEmpty else {
+            return rawURL
+        }
+        let blocked: Set<String> = [
+            "fbclid", "gclid", "yclid", "msclkid", "igshid",
+            "mc_cid", "mc_eid", "_ga", "_gl", "ref_src", "si",
+        ]
+        let filtered = items.filter { item in
+            let k = item.name.lowercased()
+            return !k.hasPrefix("utm_") && !blocked.contains(k)
+        }
+        comp.queryItems = filtered.isEmpty ? nil : filtered
+        return comp.url?.absoluteString ?? rawURL
+    }
+
     func togglePinTab(_ id: UUID) {
         if let tab = tabs.first(where: { $0.id == id }) {
             tab.isPinned.toggle()
@@ -1612,6 +1656,54 @@ final class BrowserStore: ObservableObject {
         })()
         """
         _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func cycleMediaPlaybackRate() {
+        let js = """
+        (() => {
+          const medias = [...document.querySelectorAll("video, audio")];
+          if (medias.length === 0) return 0;
+          const cur = medias[0].playbackRate || 1.0;
+          const next = cur < 1.2 ? 1.25 : (cur < 1.45 ? 1.5 : (cur < 1.9 ? 2.0 : 1.0));
+          medias.forEach(m => { m.playbackRate = next; });
+          return next;
+        })()
+        """
+        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func toggleSmartDarkPage() {
+        let js = """
+        (() => {
+          const root = document.documentElement;
+          if (!root) return;
+          const active = root.getAttribute("data-rb-smart-dark") === "1";
+          if (active) {
+            root.removeAttribute("data-rb-smart-dark");
+            document.getElementById("rb-smart-dark-style")?.remove();
+          } else {
+            root.setAttribute("data-rb-smart-dark", "1");
+            let st = document.getElementById("rb-smart-dark-style");
+            if (!st) {
+              st = document.createElement("style");
+              st.id = "rb-smart-dark-style";
+              root.appendChild(st);
+            }
+            st.textContent =
+              "html[data-rb-smart-dark='1']{filter:invert(0.92) hue-rotate(180deg)!important;background:#121318!important}" +
+              "html[data-rb-smart-dark='1'] img,html[data-rb-smart-dark='1'] video,html[data-rb-smart-dark='1'] picture,html[data-rb-smart-dark='1'] canvas,html[data-rb-smart-dark='1'] iframe{filter:invert(1) hue-rotate(180deg)!important}";
+          }
+        })()
+        """
+        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func clearAllDownloads() {
+        for item in userData.downloads {
+            try? FileManager.default.removeItem(atPath: item.localPath)
+        }
+        userData.downloads.removeAll()
+        userData.save()
     }
 
     // MARK: - Edge-Style Read Aloud (TTS)

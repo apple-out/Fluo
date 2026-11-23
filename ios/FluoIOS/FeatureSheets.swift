@@ -607,6 +607,11 @@ struct TabsSheet: View {
                 }
                 ToolbarItemGroup(placement: .navigationBarTrailing) {
                     Menu {
+                        Button {
+                            store.deduplicateTabsInCurrentWorkspace()
+                        } label: {
+                            Label(t("tabs.deduplicate"), systemImage: "sparkles.rectangle.stack")
+                        }
                         Button(role: .destructive) {
                             store.closeAllTabsInCurrentWorkspace()
                         } label: {
@@ -718,6 +723,12 @@ struct MenuSheet: View {
                                 }
                                 Divider().opacity(0.25)
 
+                                menuRow(t("menu.cleanUrl"), icon: "sparkles") {
+                                    UIPasteboard.general.string = BrowserStore.cleanURLWithoutTrackers(store.activeTab.urlString)
+                                    copiedFeedback = true
+                                }
+                                Divider().opacity(0.25)
+
                                 menuRow(t("tr.tts"), icon: store.isSpeakingTTS ? "speaker.wave.3.fill" : "speaker.wave.2") {
                                     dismiss()
                                     store.startOrToggleTTS()
@@ -727,6 +738,18 @@ struct MenuSheet: View {
                                 menuRow(t("menu.pip"), icon: "pip") {
                                     dismiss()
                                     store.togglePictureInPicture()
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.videoSpeed"), icon: "forward.circle") {
+                                    store.cycleMediaPlaybackRate()
+                                    dismiss()
+                                }
+                                Divider().opacity(0.25)
+
+                                menuRow(t("menu.smartDark"), icon: "moon.stars") {
+                                    store.toggleSmartDarkPage()
+                                    dismiss()
                                 }
                                 Divider().opacity(0.25)
 
@@ -1886,59 +1909,85 @@ struct SettingsSheet: View {
 struct DownloadsSheet: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var filtered: [DownloadItemRecord] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return store.userData.downloads }
+        return store.userData.downloads.filter {
+            $0.fileName.localizedCaseInsensitiveContains(q) || $0.sourceURL.localizedCaseInsensitiveContains(q)
+        }
+    }
+
+    private var totalBytes: Int64 {
+        store.userData.downloads.reduce(0) { $0 + $1.byteSize }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                if store.userData.downloads.isEmpty {
+                if filtered.isEmpty {
                     Text(t("dl.empty"))
                         .foregroundStyle(.secondary)
                         .listRowBackground(Color.white.opacity(0.06))
                 } else {
-                    ForEach(store.userData.downloads) { item in
-                        HStack(spacing: 12) {
-                            Image(systemName: "doc.fill")
-                                .foregroundStyle(FluoThemeTokens.indigo)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(item.fileName)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                Text(ByteCountFormatter.string(fromByteCount: item.byteSize, countStyle: .file))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text(item.sourceURL)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            Spacer()
-                            if FileManager.default.fileExists(atPath: item.localPath) {
-                                ShareLink(item: URL(fileURLWithPath: item.localPath)) {
-                                    Image(systemName: "square.and.arrow.up")
-                                        .font(.subheadline)
+                    Section {
+                        ForEach(filtered) { item in
+                            HStack(spacing: 12) {
+                                Image(systemName: "doc.fill")
+                                    .foregroundStyle(FluoThemeTokens.indigo)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.fileName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                    Text(ByteCountFormatter.string(fromByteCount: item.byteSize, countStyle: .file))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Text(item.sourceURL)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
                                 }
-                                .buttonStyle(.plain)
+                                Spacer()
+                                if FileManager.default.fileExists(atPath: item.localPath) {
+                                    ShareLink(item: URL(fileURLWithPath: item.localPath)) {
+                                        Image(systemName: "square.and.arrow.up")
+                                            .font(.subheadline)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .listRowBackground(Color.white.opacity(0.08))
+                            .swipeActions {
+                                Button(role: .destructive) {
+                                    try? FileManager.default.removeItem(atPath: item.localPath)
+                                    store.userData.downloads.removeAll { $0.id == item.id }
+                                    store.userData.save()
+                                } label: {
+                                    Text(t("set.delete"))
+                                }
                             }
                         }
-                        .listRowBackground(Color.white.opacity(0.08))
-                        .swipeActions {
-                            Button(role: .destructive) {
-                                try? FileManager.default.removeItem(atPath: item.localPath)
-                                store.userData.downloads.removeAll { $0.id == item.id }
-                                store.userData.save()
-                            } label: {
-                                Text(t("set.delete"))
-                            }
-                        }
+                    } footer: {
+                        Text("\(store.userData.downloads.count) files · \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))")
+                            .font(.caption2)
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .background { LiquidAuroraBackground() }
+            .searchable(text: $search, prompt: t("dl.search"))
             .navigationTitle(t("dl.title"))
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !store.userData.downloads.isEmpty {
+                        Button(t("dl.clearAll"), role: .destructive) {
+                            store.clearAllDownloads()
+                        }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }

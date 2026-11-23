@@ -77,7 +77,12 @@
       );
     let elements = Array.from(root.querySelectorAll(selector)).filter(
       (element) => {
-        if (isHidden(element) || element.closest("[id^='rb-'], script, style, noscript, svg, template")) {
+        if (
+          isHidden(element) ||
+          element.closest(
+            "[id^='rb-'], script, style, noscript, svg, template, textarea, input, select, [contenteditable='true'], [contenteditable=''], [role='textbox'], .monaco-editor, .cm-editor, .CodeMirror",
+          )
+        ) {
           return false;
         }
         if (element.tagName === "DIV") {

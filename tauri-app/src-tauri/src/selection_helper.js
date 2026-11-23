@@ -662,6 +662,43 @@
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else if (action === "scroll-bottom") {
       window.scrollTo({ top: document.documentElement.scrollHeight || 999999, behavior: "smooth" });
+    } else if (action === "media-rate") {
+      const medias = [...document.querySelectorAll("video, audio")];
+      if (medias.length > 0) {
+        const cur = medias[0].playbackRate || 1.0;
+        const nextRate =
+          text && text !== "cycle"
+            ? Math.max(0.25, Math.min(4.0, parseFloat(text) || 1.0))
+            : cur < 1.2
+              ? 1.25
+              : cur < 1.45
+                ? 1.5
+                : cur < 1.9
+                  ? 2.0
+                  : 1.0;
+        for (const m of medias) {
+          m.playbackRate = nextRate;
+        }
+      }
+    } else if (action === "toggle-dark-page") {
+      const root = document.documentElement;
+      if (!root) return;
+      const active = root.getAttribute("data-rb-smart-dark") === "1";
+      if (active) {
+        root.removeAttribute("data-rb-smart-dark");
+        document.getElementById("rb-smart-dark-style")?.remove();
+      } else {
+        root.setAttribute("data-rb-smart-dark", "1");
+        let st = document.getElementById("rb-smart-dark-style");
+        if (!st) {
+          st = document.createElement("style");
+          st.id = "rb-smart-dark-style";
+          root.appendChild(st);
+        }
+        st.textContent =
+          "html[data-rb-smart-dark='1']{filter:invert(0.92) hue-rotate(180deg)!important;background:#121318!important}" +
+          "html[data-rb-smart-dark='1'] img,html[data-rb-smart-dark='1'] video,html[data-rb-smart-dark='1'] picture,html[data-rb-smart-dark='1'] canvas,html[data-rb-smart-dark='1'] iframe{filter:invert(1) hue-rotate(180deg)!important}";
+      }
     }
   };
 

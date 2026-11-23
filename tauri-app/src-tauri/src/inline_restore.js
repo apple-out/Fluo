@@ -1,5 +1,7 @@
 (() => {
   window.__tbDisconnectViewport?.();
+  window.__tbSetDynamicTranslate?.(false);
+  window.__fluoSetDynamicObserver?.(false);
   delete window.__tbGetViewportOrder;
   delete window.__tbDisconnectViewport;
   const originals = [...document.querySelectorAll("[data-rb-inline-key]")];

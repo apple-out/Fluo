@@ -136,7 +136,9 @@ export const api = {
       | "tts-rate"
       | "pip"
       | "scroll-top"
-      | "scroll-bottom",
+      | "scroll-bottom"
+      | "media-rate"
+      | "toggle-dark-page",
     text?: string,
     x?: number,
     y?: number,

@@ -5,6 +5,8 @@
       sourcePrefix: "원문:",
       cancel: "취소",
       save: "저장",
+      toggleOrigTitle: "이 문단 원문 함께 보기 토글",
+      copyParaTitle: "이 문단 번역 복사",
       retryTitle: "이 문단 다시 번역",
       editTitle: "이 문단 번역 수정",
       reportTitle: "이 문단 오역·오류 제보",
@@ -14,6 +16,8 @@
       sourcePrefix: "Original:",
       cancel: "Cancel",
       save: "Save",
+      toggleOrigTitle: "Toggle original paragraph",
+      copyParaTitle: "Copy paragraph translation",
       retryTitle: "Retranslate this paragraph",
       editTitle: "Edit translation",
       reportTitle: "Report translation issue",
@@ -23,6 +27,8 @@
       sourcePrefix: "原文:",
       cancel: "キャンセル",
       save: "保存",
+      toggleOrigTitle: "この段落の原文表示を切替",
+      copyParaTitle: "この段落の翻訳をコピー",
       retryTitle: "この段落を再翻訳",
       editTitle: "翻訳を編集",
       reportTitle: "誤訳・不具合を報告",
@@ -32,6 +38,8 @@
       sourcePrefix: "原文:",
       cancel: "取消",
       save: "保存",
+      toggleOrigTitle: "切换显示此段原文",
+      copyParaTitle: "复制此段译文",
       retryTitle: "重新翻译此段落",
       editTitle: "编辑此段译文",
       reportTitle: "报告误译或错误",
@@ -391,8 +399,43 @@
       actionBar.id = "rb-para-actions";
       actionBar.className = "rb-liquid-surface";
       actionBar.style.cssText =
-        `position:fixed;left:${Math.max(8, Math.min(rect.right - 126, window.innerWidth - 138))}px;top:${Math.max(8, rect.top - 32)}px;z-index:2147483644;display:flex;gap:4px;padding:3px 5px;border-radius:999px;font:11px/1 'Pretendard',system-ui,sans-serif;`;
+        `position:fixed;left:${Math.max(8, Math.min(rect.right - 196, window.innerWidth - 208))}px;top:${Math.max(8, rect.top - 32)}px;z-index:2147483644;display:flex;gap:4px;padding:3px 5px;border-radius:999px;font:11px/1 'Pretendard',system-ui,sans-serif;`;
       const s = ilStr();
+      const toggleOrig = document.createElement("button");
+      toggleOrig.type = "button";
+      toggleOrig.className = "rb-liquid-btn";
+      toggleOrig.textContent = "⇄";
+      toggleOrig.title = s.toggleOrigTitle;
+      toggleOrig.onclick = (e) => {
+        e.stopPropagation();
+        const origEl =
+          originals.get(key) ||
+          (key ? document.querySelector(`[data-rb-inline-key="${CSS.escape(key)}"]`) : null);
+        if (origEl) {
+          origEl.hidden = !origEl.hidden;
+          if (!origEl.hidden) {
+            el.setAttribute("data-rb-inline-bilingual", "1");
+          } else {
+            el.removeAttribute("data-rb-inline-bilingual");
+          }
+        }
+      };
+      const copyBtn = document.createElement("button");
+      copyBtn.type = "button";
+      copyBtn.className = "rb-liquid-btn";
+      copyBtn.textContent = "⧉";
+      copyBtn.title = s.copyParaTitle;
+      copyBtn.onclick = (e) => {
+        e.stopPropagation();
+        const trText = (el.innerText || el.textContent || "").trim();
+        if (trText) {
+          try {
+            navigator.clipboard?.writeText(trText);
+          } catch {}
+          copyBtn.textContent = "✓";
+          setTimeout(() => removeActionBar(), 500);
+        }
+      };
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "rb-liquid-btn";
@@ -435,6 +478,8 @@
       actionBar.onmouseleave = () => {
         hideTimer = setTimeout(removeActionBar, 250);
       };
+      actionBar.appendChild(toggleOrig);
+      actionBar.appendChild(copyBtn);
       actionBar.appendChild(retry);
       actionBar.appendChild(edit);
       actionBar.appendChild(report);

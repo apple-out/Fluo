@@ -20,8 +20,14 @@
 
   function isVisible(el) {
     if (!el || el.nodeType !== 1) return false;
+    if (el.closest("[hidden], [id^='rb-'], script, style, noscript, svg, template")) {
+      return false;
+    }
     const style = window.getComputedStyle(el);
-    return style.display !== "none" && style.visibility !== "hidden";
+    if (style.display === "none" || style.visibility === "hidden" || parseFloat(style.opacity || "1") === 0) {
+      return false;
+    }
+    return el.getClientRects().length > 0;
   }
 
   function buildMarks(needle) {

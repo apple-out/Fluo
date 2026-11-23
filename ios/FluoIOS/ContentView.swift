@@ -726,6 +726,7 @@ struct ContentView: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(t("sec.title"))
 
                 if collapsed {
                     Text(displayHost.isEmpty ? "Fluo" : displayHost)
@@ -898,6 +899,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .liquidGlass(cornerRadius: 13, interactive: true)
+                    .accessibilityLabel(t("tabs.title"))
 
                     Spacer(minLength: 4)
 
@@ -911,6 +913,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(LiquidPressButtonStyle())
                     .liquidGlassCircle(interactive: true)
+                    .accessibilityLabel(t("menu.title"))
                 }
             }
             .frame(height: collapsed ? 0 : 44)
