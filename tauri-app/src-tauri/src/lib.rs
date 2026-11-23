@@ -503,13 +503,9 @@ fn close_tabs_to_right(app: AppHandle, tab_id: String) -> Result<BrowserState, S
     browser::close_tabs_to_right(&app, &tab_id)
 }
 
-/// Home pages offered by the search-engine setting (plan 9: Google by default).
-fn home_url(engine: &str) -> &'static str {
-    match engine {
-        "bing" => "https://www.bing.com/",
-        "duckduckgo" => "https://duckduckgo.com/",
-        _ => browser::DEFAULT_URL,
-    }
+/// Home pages offered by the startup flow (dedicated Fluo Start Page by default).
+fn home_url(_engine: &str) -> &'static str {
+    browser::DEFAULT_URL
 }
 
 pub fn effective_home_url(app: &AppHandle) -> String {

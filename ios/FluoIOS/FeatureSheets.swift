@@ -310,9 +310,15 @@ struct TabsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showNewWorkspace = false
+    @State private var showRenameWorkspace = false
+    @State private var wsTargetId = ""
     @State private var wsDraftName = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var activeWorkspace: WorkspaceItem? {
+        store.userData.workspaces.first(where: { $0.id == store.userData.activeWorkspaceId })
+    }
 
     var body: some View {
         NavigationStack {
@@ -342,11 +348,18 @@ struct TabsSheet: View {
                                         prominent: active
                                     )
                                     .contextMenu {
+                                        Button {
+                                            wsTargetId = ws.id
+                                            wsDraftName = ws.name
+                                            showRenameWorkspace = true
+                                        } label: {
+                                            Label(t("ws.rename"), systemImage: "pencil")
+                                        }
                                         if ws.id != "default" {
                                             Button(role: .destructive) {
                                                 store.deleteWorkspace(ws.id)
                                             } label: {
-                                                Label(t("set.delete"), systemImage: "trash")
+                                                Label(t("ws.delete"), systemImage: "trash")
                                             }
                                         }
                                     }
@@ -363,35 +376,164 @@ struct TabsSheet: View {
                                 }
                                 .buttonStyle(LiquidPressButtonStyle())
                                 .liquidGlassCircle(interactive: true)
+
+                                if let ws = activeWorkspace {
+                                    Menu {
+                                        Button {
+                                            wsTargetId = ws.id
+                                            wsDraftName = ws.name
+                                            showRenameWorkspace = true
+                                        } label: {
+                                            Label(t("ws.rename"), systemImage: "pencil")
+                                        }
+                                        if ws.id != "default" {
+                                            Button(role: .destructive) {
+                                                store.deleteWorkspace(ws.id)
+                                            } label: {
+                                                Label(t("ws.delete"), systemImage: "trash")
+                                            }
+                                        }
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.caption.bold())
+                                            .frame(width: 30, height: 30)
+                                            .contentShape(Circle())
+                                    }
+                                    .liquidGlassCircle(interactive: true)
+                                }
                             }
                         }
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                     }
 
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
-                            ForEach(store.activeWorkspaceTabs) { tab in
-                                SwipeableTabCard(store: store, tab: tab, dismiss: { dismiss() })
+                    List {
+                        ForEach(store.activeWorkspaceTabs) { tab in
+                            let isCurrent = tab.id == store.activeTabId
+                            HStack(spacing: 10) {
+                                Button {
+                                    store.activeTabId = tab.id
+                                    dismiss()
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        if tab.isPinned {
+                                            Image(systemName: "pin.fill")
+                                                .foregroundStyle(FluoThemeTokens.indigo)
+                                                .font(.caption)
+                                        }
+                                        if tab.isPrivate {
+                                            Text(t("tabs.privateBadge"))
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(FluoThemeTokens.violet.opacity(0.28), in: Capsule())
+                                        }
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(tab.title)
+                                                .font(.subheadline.weight(isCurrent ? .bold : .medium))
+                                                .lineLimit(1)
+                                            Text(tab.isStartPage ? t("start.title") : tab.urlString)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                if !tab.isPinned && (store.tabs.count > 1 || !tab.isStartPage) {
+                                    Button(role: .destructive) {
+                                        store.closeTab(tab.id)
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(14)
+                            .liquidGlass(
+                                cornerRadius: 18,
+                                tint: tab.isPrivate ? FluoThemeTokens.violet : (isCurrent ? FluoThemeTokens.indigo : .clear)
+                            )
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                if !tab.isPinned && (store.tabs.count > 1 || !tab.isStartPage) {
+                                    Button(role: .destructive) {
+                                        store.closeTab(tab.id)
+                                    } label: {
+                                        Label(t("set.delete"), systemImage: "trash")
+                                    }
+                                }
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    store.togglePinTab(tab.id)
+                                } label: {
+                                    Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: tab.isPinned ? "pin.slash" : "pin")
+                                }
+                                .tint(FluoThemeTokens.indigo)
+                            }
+                            .contextMenu {
+                                Button {
+                                    store.togglePinTab(tab.id)
+                                } label: {
+                                    Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
+                                }
+
+                                Menu(t("tabs.moveWs")) {
+                                    ForEach(store.userData.workspaces) { ws in
+                                        Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
+                                    }
+                                }
+
+                                if !tab.isPinned && (store.tabs.count > 1 || !tab.isStartPage) {
+                                    Button(role: .destructive) {
+                                        store.closeTab(tab.id)
+                                    } label: {
+                                        Label(t("set.delete"), systemImage: "xmark.circle")
+                                    }
+                                }
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 20)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
             }
             .navigationTitle(t("tabs.title"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItemGroup(placement: .navigationBarLeading) {
                     Button {
                         store.newTab(isPrivate: true)
                         dismiss()
                     } label: {
                         Label(t("tabs.newPrivate"), systemImage: "eye.slash")
                     }
+                    if !store.closedTabs.isEmpty {
+                        Button {
+                            store.reopenClosedTab()
+                            dismiss()
+                        } label: {
+                            Label(t("tabs.reopen"), systemImage: "arrow.uturn.left.circle")
+                        }
+                    }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItemGroup(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(role: .destructive) {
+                            store.closeAllTabsInCurrentWorkspace()
+                        } label: {
+                            Label(t("tabs.closeAll"), systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
                     Button {
                         store.newTab(isPrivate: false)
                         dismiss()
@@ -405,130 +547,11 @@ struct TabsSheet: View {
                 Button(t("common.cancel"), role: .cancel) {}
                 Button(t("common.add")) { store.createWorkspace(name: wsDraftName) }
             }
-        }
-    }
-}
-
-private struct SwipeableTabCard: View {
-    @ObservedObject var store: BrowserStore
-    @ObservedObject var tab: BrowserTab
-    var dismiss: () -> Void
-
-    @State private var dragX: CGFloat = 0
-
-    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
-
-    private var canSwipeClose: Bool {
-        !tab.isPinned && store.tabs.count > 1
-    }
-
-    var body: some View {
-        let isCurrent = tab.id == store.activeTabId
-        ZStack(alignment: .trailing) {
-            if dragX < -8 {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.red.opacity(min(0.85, Double(-dragX / 95) * 0.85)))
-                    .overlay(alignment: .trailing) {
-                        Image(systemName: "trash.fill")
-                            .foregroundStyle(.white)
-                            .padding(.trailing, 20)
-                            .opacity(min(1.0, Double(-dragX / 55)))
-                    }
+            .alert(t("ws.rename"), isPresented: $showRenameWorkspace) {
+                TextField(t("ws.namePlaceholder"), text: $wsDraftName)
+                Button(t("common.cancel"), role: .cancel) {}
+                Button(t("common.save")) { store.renameWorkspace(wsTargetId, name: wsDraftName) }
             }
-
-            HStack(spacing: 10) {
-                Button {
-                    store.activeTabId = tab.id
-                    dismiss()
-                } label: {
-                    HStack(spacing: 10) {
-                        if tab.isPinned {
-                            Image(systemName: "pin.fill")
-                                .foregroundStyle(FluoThemeTokens.indigo)
-                                .font(.caption)
-                        }
-                        if tab.isPrivate {
-                            Text(t("tabs.privateBadge"))
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(FluoThemeTokens.violet.opacity(0.28), in: Capsule())
-                        }
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(tab.title)
-                                .font(.subheadline.weight(isCurrent ? .bold : .medium))
-                                .lineLimit(1)
-                            Text(tab.urlString)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-
-                if canSwipeClose {
-                    Button(role: .destructive) {
-                        store.closeTab(tab.id)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(14)
-            .liquidGlass(
-                cornerRadius: 18,
-                tint: tab.isPrivate ? FluoThemeTokens.violet : (isCurrent ? FluoThemeTokens.indigo : .clear)
-            )
-            .contextMenu {
-                Button {
-                    store.togglePinTab(tab.id)
-                } label: {
-                    Label(tab.isPinned ? t("tabs.unpin") : t("tabs.pin"), systemImage: "pin")
-                }
-
-                Menu(t("tabs.moveWs")) {
-                    ForEach(store.userData.workspaces) { ws in
-                        Button(ws.name) { store.moveTab(tab.id, toWorkspace: ws.id) }
-                    }
-                }
-            }
-            .offset(x: dragX)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { value in
-                        guard canSwipeClose else { return }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        if dx < 0 && abs(dx) > abs(dy) * 1.35 {
-                            dragX = max(-140, dx)
-                        }
-                    }
-                    .onEnded { value in
-                        guard canSwipeClose else {
-                            dragX = 0
-                            return
-                        }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        if dx < -95 && abs(dx) > abs(dy) {
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            withAnimation(.easeOut(duration: 0.18)) {
-                                dragX = -320
-                            }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14) {
-                                store.closeTab(tab.id)
-                            }
-                        } else {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
-                                dragX = 0
-                            }
-                        }
-                    }
-            )
         }
     }
 }
@@ -537,6 +560,8 @@ struct MenuSheet: View {
     @ObservedObject var store: BrowserStore
     var openSheet: (ActiveSheetKind) -> Void
     @Environment(\.dismiss) private var dismiss
+
+    @State private var copiedFeedback = false
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
 
@@ -550,12 +575,11 @@ struct MenuSheet: View {
                         LiquidGlassGroup(spacing: 10) {
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                                 quickTile(
-                                    title: store.isCurrentPageBookmarked ? t("menu.bookmarkRemove") : t("menu.bookmarkAdd"),
+                                    title: store.isCurrentPageBookmarked ? t("bm.editTitle") : t("menu.bookmarkAdd"),
                                     icon: store.isCurrentPageBookmarked ? "star.fill" : "star",
                                     active: store.isCurrentPageBookmarked
                                 ) {
-                                    store.toggleCurrentBookmark()
-                                    dismiss()
+                                    openSheet(.bookmarkEditor)
                                 }
 
                                 quickTile(
@@ -590,6 +614,79 @@ struct MenuSheet: View {
                         }
 
                         VStack(spacing: 0) {
+                            if !store.activeTab.isStartPage, let shareUrl = URL(string: store.activeTab.urlString) {
+                                ShareLink(item: shareUrl) {
+                                    HStack {
+                                        Label(t("menu.share"), systemImage: "square.and.arrow.up")
+                                            .font(.subheadline.weight(.medium))
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 14)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                Divider().opacity(0.25)
+
+                                menuRow(copiedFeedback ? t("menu.copied") : t("menu.copyUrl"), icon: "doc.on.doc") {
+                                    UIPasteboard.general.string = store.activeTab.urlString
+                                    copiedFeedback = true
+                                }
+                                Divider().opacity(0.25)
+                            }
+
+                            HStack {
+                                Label(t("set.zoom"), systemImage: "textformat.size")
+                                    .font(.subheadline.weight(.medium))
+                                Spacer()
+                                Button {
+                                    store.activeTab.applyPageZoom(store.activeTab.pageZoom - 0.1)
+                                } label: {
+                                    Image(systemName: "minus.circle")
+                                        .font(.title3)
+                                }
+                                .buttonStyle(.plain)
+                                Text("\(Int((store.activeTab.pageZoom * 100).rounded()))%")
+                                    .font(.caption.monospacedDigit().weight(.bold))
+                                    .frame(minWidth: 44)
+                                    .onTapGesture {
+                                        store.activeTab.applyPageZoom(1.0)
+                                    }
+                                Button {
+                                    store.activeTab.applyPageZoom(store.activeTab.pageZoom + 0.1)
+                                } label: {
+                                    Image(systemName: "plus.circle")
+                                        .font(.title3)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 11)
+
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.startPage"), icon: "house") {
+                                store.activeTab.openStartPage()
+                                dismiss()
+                            }
+                            Divider().opacity(0.25)
+                            menuRow(t("menu.bookmarkAll"), icon: "star.square.on.square") {
+                                store.bookmarkAllTabs()
+                                dismiss()
+                            }
+                            if !store.closedTabs.isEmpty {
+                                Divider().opacity(0.25)
+                                menuRow(t("tabs.reopen"), icon: "arrow.uturn.left.circle") {
+                                    store.reopenClosedTab()
+                                    dismiss()
+                                }
+                            }
+                        }
+                        .liquidGlass(cornerRadius: 22)
+
+                        VStack(spacing: 0) {
                             menuRow(t("menu.bookmarks"), icon: "book") { openSheet(.bookmarks) }
                             Divider().opacity(0.25)
                             menuRow(t("menu.history"), icon: "clock") { openSheet(.history) }
@@ -601,6 +698,8 @@ struct MenuSheet: View {
                         .liquidGlass(cornerRadius: 22)
 
                         VStack(spacing: 0) {
+                            menuRow(t("sec.title"), icon: "lock.shield") { openSheet(.siteSecurity) }
+                            Divider().opacity(0.25)
                             menuRow(t("menu.feedback"), icon: "ladybug") { openSheet(.feedback) }
                             Divider().opacity(0.25)
                             menuRow(t("menu.settings"), icon: "gearshape") { openSheet(.settings) }
@@ -664,6 +763,7 @@ struct MenuSheet: View {
 
 struct BookmarksSheet: View {
     @ObservedObject var store: BrowserStore
+    var onEdit: (BookmarkItem) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
 
@@ -673,7 +773,9 @@ struct BookmarksSheet: View {
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
         if q.isEmpty { return store.userData.bookmarks }
         return store.userData.bookmarks.filter {
-            $0.title.localizedCaseInsensitiveContains(q) || $0.url.localizedCaseInsensitiveContains(q)
+            $0.title.localizedCaseInsensitiveContains(q)
+                || $0.url.localizedCaseInsensitiveContains(q)
+                || $0.folder.localizedCaseInsensitiveContains(q)
         }
     }
 
@@ -685,18 +787,38 @@ struct BookmarksSheet: View {
                         .listRowBackground(Color.white.opacity(0.06))
                 } else {
                     ForEach(filtered) { item in
-                        Button {
-                            store.activeTab.navigate(input: item.url, searchEngine: store.userData.searchEngine)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
-                                Text(item.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: 10) {
+                            Button {
+                                store.activeTab.navigate(input: item.url, searchEngine: store.userData.searchEngine)
+                                dismiss()
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                                    HStack(spacing: 6) {
+                                        if !item.folder.isEmpty {
+                                            Text(item.folder)
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(FluoThemeTokens.indigo)
+                                        }
+                                        Text(item.url).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                onEdit(item)
+                            } label: {
+                                Image(systemName: "pencil.circle")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .listRowBackground(Color.white.opacity(0.08))
                         .swipeActions {
                             Button(role: .destructive) { store.deleteBookmark(item.id) } label: { Text(t("set.delete")) }
+                            Button { onEdit(item) } label: { Text(t("bm.editTitle")) }.tint(FluoThemeTokens.indigo)
                         }
                     }
                 }
@@ -705,6 +827,164 @@ struct BookmarksSheet: View {
             .background { LiquidAuroraBackground() }
             .searchable(text: $search, prompt: t("bm.search"))
             .navigationTitle(t("bm.title"))
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(t("common.done")) { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+struct BookmarkEditorSheet: View {
+    @ObservedObject var store: BrowserStore
+    var existing: BookmarkItem?
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var nameDraft = ""
+    @State private var urlDraft = ""
+    @State private var folderDraft = "Default"
+
+    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(t("bm.nameLabel"), text: $nameDraft)
+                    TextField(t("bm.urlLabel"), text: $urlDraft)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    TextField(t("bm.folderLabel"), text: $folderDraft)
+                }
+                .listRowBackground(Color.white.opacity(0.08))
+
+                if let existing {
+                    Section {
+                        Button(t("bm.remove"), role: .destructive) {
+                            store.deleteBookmark(existing.id)
+                            dismiss()
+                        }
+                    }
+                    .listRowBackground(Color.white.opacity(0.08))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
+            .navigationTitle(existing == nil ? t("bm.addTitle") : t("bm.editTitle"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(t("common.cancel")) { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(t("bm.save")) {
+                        store.upsertBookmark(
+                            id: existing?.id,
+                            title: nameDraft,
+                            url: urlDraft,
+                            folder: folderDraft
+                        )
+                        dismiss()
+                    }
+                    .disabled(urlDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+            .onAppear {
+                if let existing {
+                    nameDraft = existing.title
+                    urlDraft = existing.url
+                    folderDraft = existing.folder
+                } else {
+                    nameDraft = store.activeTab.title
+                    urlDraft = store.activeTab.urlString
+                    folderDraft = "Default"
+                }
+            }
+        }
+    }
+}
+
+struct SiteSecuritySheet: View {
+    @ObservedObject var store: BrowserStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var copied = false
+
+    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var isHttps: Bool {
+        store.activeTab.urlString.lowercased().hasPrefix("https://")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    HStack(spacing: 12) {
+                        Image(systemName: store.activeTab.isStartPage ? "sparkles" : (isHttps ? "lock.shield.fill" : "exclamationmark.triangle.fill"))
+                            .font(.title2)
+                            .foregroundStyle(store.activeTab.isStartPage ? FluoThemeTokens.indigo : (isHttps ? .green : .orange))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(store.activeTab.isStartPage ? t("sec.internal") : (isHttps ? t("sec.https") : t("sec.http")))
+                                .font(.subheadline.weight(.bold))
+                            if !store.currentHost.isEmpty {
+                                Text(store.currentHost)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    if !store.activeTab.isStartPage {
+                        Text(store.activeTab.urlString)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+
+                        Button(copied ? t("menu.copied") : t("sec.copyUrl")) {
+                            UIPasteboard.general.string = store.activeTab.urlString
+                            copied = true
+                        }
+                    }
+                }
+                .listRowBackground(Color.white.opacity(0.08))
+
+                if !store.activeTab.isStartPage {
+                    Section {
+                        if !store.currentHost.isEmpty {
+                            Toggle(t("menu.adblockSite"), isOn: Binding(
+                                get: { store.isCurrentHostAdBlockEnabled },
+                                set: { _ in store.toggleCurrentHostAdBlock() }
+                            ))
+                        }
+
+                        Toggle(t("menu.desktop"), isOn: Binding(
+                            get: { store.activeTab.isDesktopMode },
+                            set: { store.activeTab.applyDesktopMode($0) }
+                        ))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(t("set.zoom"))
+                                Spacer()
+                                Text("\(Int((store.activeTab.pageZoom * 100).rounded()))%")
+                                    .foregroundStyle(.secondary)
+                            }
+                            Slider(value: Binding(
+                                get: { store.activeTab.pageZoom },
+                                set: { store.activeTab.applyPageZoom($0) }
+                            ), in: 0.7...1.8, step: 0.1)
+                            .tint(FluoThemeTokens.indigo)
+                        }
+                    }
+                    .listRowBackground(Color.white.opacity(0.08))
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .background { LiquidAuroraBackground() }
+            .navigationTitle(t("sec.title"))
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
@@ -803,52 +1083,137 @@ struct GlossarySheet: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
 
+    @State private var selectedFolder = "__all__"
+    @State private var targetFolder = "Default"
+    @State private var searchQuery = ""
     @State private var src = ""
     @State private var dst = ""
     @State private var caseSensitive = false
 
+    @State private var showNewFolder = false
+    @State private var showRenameFolder = false
+    @State private var folderRenameTarget = "Default"
+    @State private var folderDraft = ""
+
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var filteredGlossary: [GlossaryItem] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return store.userData.glossary.filter { item in
+            let matchesFolder = selectedFolder == "__all__" || item.folder == selectedFolder
+            let matchesQuery = q.isEmpty
+                || item.source.localizedCaseInsensitiveContains(q)
+                || item.target.localizedCaseInsensitiveContains(q)
+                || item.folder.localizedCaseInsensitiveContains(q)
+            return matchesFolder && matchesQuery
+        }
+    }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    TextField(t("gl.source"), text: $src)
-                    TextField(t("gl.target"), text: $dst)
-                    Toggle(t("gl.case"), isOn: $caseSensitive)
-                    Button(t("gl.add")) {
-                        store.addGlossaryItem(source: src, target: dst, caseSensitive: caseSensitive)
-                        src = ""
-                        dst = ""
+            VStack(spacing: 0) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LiquidGlassGroup(spacing: 8) {
+                        HStack(spacing: 8) {
+                            folderChip(id: "__all__", title: t("gl.all"))
+                            ForEach(store.userData.glossaryFolders, id: \.self) { folder in
+                                folderChip(id: folder, title: folder)
+                                    .contextMenu {
+                                        if folder != "Default" {
+                                            Button {
+                                                folderRenameTarget = folder
+                                                folderDraft = folder
+                                                showRenameFolder = true
+                                            } label: {
+                                                Label(t("gl.renameFolder"), systemImage: "pencil")
+                                            }
+                                            Button(role: .destructive) {
+                                                store.deleteGlossaryFolder(folder)
+                                                if selectedFolder == folder { selectedFolder = "__all__" }
+                                            } label: {
+                                                Label(t("gl.deleteFolder"), systemImage: "trash")
+                                            }
+                                        }
+                                    }
+                            }
+                            Button {
+                                folderDraft = ""
+                                showNewFolder = true
+                            } label: {
+                                Label(t("gl.newFolder"), systemImage: "folder.badge.plus")
+                                    .font(.caption.bold())
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(LiquidPressButtonStyle())
+                            .liquidGlassPill(interactive: true)
+                        }
                     }
-                    .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
-                .listRowBackground(Color.white.opacity(0.08))
 
-                Section {
-                    if store.userData.glossary.isEmpty {
-                        Text(t("gl.empty")).foregroundStyle(.secondary)
-                    } else {
-                        ForEach(store.userData.glossary) { item in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(item.source).font(.subheadline.weight(.semibold))
-                                    Text(item.target.isEmpty ? "(keep original)" : item.target)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button(role: .destructive) {
-                                    store.deleteGlossaryItem(item.id)
-                                } label: {
-                                    Image(systemName: "trash")
+                Form {
+                    Section {
+                        TextField(t("gl.source"), text: $src)
+                        TextField(t("gl.target"), text: $dst)
+                        Picker(t("gl.folder"), selection: $targetFolder) {
+                            ForEach(store.userData.glossaryFolders, id: \.self) { folder in
+                                Text(folder).tag(folder)
+                            }
+                        }
+                        Toggle(t("gl.case"), isOn: $caseSensitive)
+                        Button(t("gl.add")) {
+                            store.addGlossaryItem(source: src, target: dst, caseSensitive: caseSensitive, folder: targetFolder)
+                            src = ""
+                            dst = ""
+                        }
+                        .disabled(src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .listRowBackground(Color.white.opacity(0.08))
+
+                    Section {
+                        if filteredGlossary.isEmpty {
+                            Text(t("gl.empty")).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(filteredGlossary) { item in
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text(item.source).font(.subheadline.weight(.semibold))
+                                            Text(item.folder)
+                                                .font(.caption2.bold())
+                                                .padding(.horizontal, 6)
+                                                .padding(.vertical, 2)
+                                                .background(FluoThemeTokens.indigo.opacity(0.18), in: Capsule())
+                                        }
+                                        Text(item.target.isEmpty ? "(keep original)" : item.target)
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: Binding(
+                                        get: { item.enabled },
+                                        set: { _ in store.toggleGlossaryEnabled(item.id) }
+                                    ))
+                                    .labelsHidden()
+                                    .tint(FluoThemeTokens.indigo)
+
+                                    Button(role: .destructive) {
+                                        store.deleteGlossaryItem(item.id)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.plain)
                                 }
                             }
                         }
                     }
+                    .listRowBackground(Color.white.opacity(0.08))
                 }
-                .listRowBackground(Color.white.opacity(0.08))
+                .scrollContentBackground(.hidden)
+                .searchable(text: $searchQuery, prompt: t("gl.search"))
             }
-            .scrollContentBackground(.hidden)
             .background { LiquidAuroraBackground() }
             .navigationTitle(t("gl.title"))
             .toolbar {
@@ -856,7 +1221,58 @@ struct GlossarySheet: View {
                     Button(t("common.done")) { dismiss() }
                 }
             }
+            .alert(t("gl.newFolder"), isPresented: $showNewFolder) {
+                TextField(t("gl.folder"), text: $folderDraft)
+                Button(t("common.cancel"), role: .cancel) {}
+                Button(t("common.add")) {
+                    store.addGlossaryFolder(folderDraft)
+                    let clean = folderDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !clean.isEmpty {
+                        selectedFolder = clean
+                        targetFolder = clean
+                    }
+                }
+            }
+            .alert(t("gl.renameFolder"), isPresented: $showRenameFolder) {
+                TextField(t("gl.folder"), text: $folderDraft)
+                Button(t("common.cancel"), role: .cancel) {}
+                Button(t("common.save")) {
+                    let clean = folderDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    store.renameGlossaryFolder(old: folderRenameTarget, new: clean)
+                    if !clean.isEmpty {
+                        if selectedFolder == folderRenameTarget { selectedFolder = clean }
+                        if targetFolder == folderRenameTarget { targetFolder = clean }
+                    }
+                }
+            }
         }
+    }
+
+    private func folderChip(id: String, title: String) -> some View {
+        let active = selectedFolder == id
+        return Button {
+            selectedFolder = id
+            if id != "__all__" {
+                targetFolder = id
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: id == "__all__" ? "tray.full" : "folder.fill")
+                    .font(.caption2)
+                Text(title)
+                    .font(.caption.weight(.bold))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .foregroundStyle(active ? .white : .primary)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(LiquidPressButtonStyle())
+        .liquidGlassPill(
+            tint: active ? FluoThemeTokens.indigo : .clear,
+            interactive: true,
+            prominent: active
+        )
     }
 }
 

@@ -66,6 +66,59 @@
   );
   let applied = 0;
 
+  function wireClonedInteractive(clone, sourceEl) {
+    clone.removeAttribute("data-rb-link-idx");
+    clone.removeAttribute("data-rb-verbatim");
+    clone.removeAttribute("id");
+    if (clone.tagName === "BUTTON") {
+      clone.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        sourceEl.click();
+      });
+      return;
+    }
+    if (clone.tagName !== "A") return;
+
+    const rawHref = (clone.getAttribute("href") || "").trim();
+    const resolvedHref = sourceEl.href || "";
+    if (rawHref && !rawHref.startsWith("#") && !rawHref.startsWith("javascript:") && resolvedHref) {
+      clone.setAttribute("href", resolvedHref);
+    }
+
+    if (!rawHref || rawHref.startsWith("javascript:")) {
+      clone.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        sourceEl.click();
+      });
+    } else if (rawHref.startsWith("#")) {
+      clone.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        const targetId = rawHref.slice(1);
+        const anchorTarget = targetId
+          ? document.getElementById(decodeURIComponent(targetId)) || document.getElementsByName(targetId)[0]
+          : null;
+        if (anchorTarget) {
+          anchorTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+        } else {
+          sourceEl.click();
+        }
+      });
+    } else {
+      clone.addEventListener("click", (ev) => {
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+        const targetAttr = (clone.getAttribute("target") || "").toLowerCase();
+        if (targetAttr === "_blank") return;
+        // Let native <a> or framework delegates run; if an SPA delegate calls preventDefault() yet fails on the cloned node, navigate directly.
+        const beforeUrl = location.href;
+        setTimeout(() => {
+          if (ev.defaultPrevented && location.href === beforeUrl && resolvedHref) {
+            window.location.assign(resolvedHref);
+          }
+        }, 160);
+      });
+    }
+  }
+
   function renderWithLinks(translated, original, text, bilingual) {
     const linkEls = [...original.querySelectorAll("[data-rb-link-idx]")];
     const mediaEls = [...original.querySelectorAll("[data-rb-media-idx]")];
@@ -170,26 +223,10 @@
           used.add(idx);
           const isVerbatim = sourceEl.hasAttribute("data-rb-verbatim");
           const clone = sourceEl.cloneNode(true);
-          clone.removeAttribute("data-rb-link-idx");
-          clone.removeAttribute("data-rb-verbatim");
-          clone.removeAttribute("id");
           if (!isVerbatim) {
             clone.textContent = innerText;
           }
-          if (clone.tagName === "BUTTON") {
-            clone.addEventListener("click", (ev) => {
-              ev.preventDefault();
-              sourceEl.click();
-            });
-          } else if (clone.tagName === "A") {
-            const href = clone.getAttribute("href");
-            if (!href || href.startsWith("#") || href.startsWith("javascript:")) {
-              clone.addEventListener("click", (ev) => {
-                ev.preventDefault();
-                sourceEl.click();
-              });
-            }
-          }
+          wireClonedInteractive(clone, sourceEl);
           translated.appendChild(clone);
         } else {
           translated.appendChild(document.createTextNode(innerText));
@@ -205,9 +242,7 @@
       if (used.has(idx)) continue;
       translated.appendChild(document.createTextNode(" "));
       const clone = sourceEl.cloneNode(true);
-      clone.removeAttribute("data-rb-link-idx");
-      clone.removeAttribute("data-rb-verbatim");
-      clone.removeAttribute("id");
+      wireClonedInteractive(clone, sourceEl);
       translated.appendChild(clone);
     }
   }

@@ -18,13 +18,19 @@ final class TranslationEngine {
         defer { lock.unlock() }
         if activeLocalModelPath == path { return }
         let code = path.path.withCString { cPath in
-            fluo_load_model(cPath, 99, 2048)
+            fluo_load_model(cPath, 99, 1024)
         }
         guard code == 0 else {
+            var detail = ""
+            if let errPtr = fluo_last_error() {
+                detail = String(cString: errPtr)
+                fluo_free_string(errPtr)
+            }
+            let suffix = detail.isEmpty ? "" : ": \(detail)"
             throw NSError(
                 domain: "FluoInference",
                 code: Int(code),
-                userInfo: [NSLocalizedDescriptionKey: "Failed to load on-device model (code \(code))."]
+                userInfo: [NSLocalizedDescriptionKey: "Failed to load on-device model (code \(code))\(suffix)"]
             )
         }
         activeLocalModelPath = path

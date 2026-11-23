@@ -130,6 +130,16 @@ extension ModelCatalog: URLSessionDownloadDelegate {
         didFinishDownloadingTo location: URL
     ) {
         let taskId = downloadTask.taskIdentifier
+        if let http = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            Task { @MainActor in
+                if let id = taskModelIds.removeValue(forKey: taskId) {
+                    activeTasks.removeValue(forKey: id)
+                    downloadProgress.removeValue(forKey: id)
+                }
+                statusError = "Model download failed (HTTP \(http.statusCode))"
+            }
+            return
+        }
         let tmpCopy = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".gguf")
         do {
             try FileManager.default.moveItem(at: location, to: tmpCopy)

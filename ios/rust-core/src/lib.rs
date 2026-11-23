@@ -1,4 +1,6 @@
 use std::ffi::{CStr, CString};
+use std::fs::File;
+use std::io::Read;
 use std::num::NonZeroU32;
 use std::os::raw::c_char;
 use std::path::PathBuf;
@@ -20,6 +22,14 @@ struct LoadedModel {
 
 static GLOBAL_BACKEND: OnceLock<Result<Arc<LlamaBackend>, String>> = OnceLock::new();
 static ACTIVE_MODEL: OnceLock<Mutex<Option<LoadedModel>>> = OnceLock::new();
+static LAST_LOAD_ERROR: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn set_last_error(msg: &str) {
+    let lock = LAST_LOAD_ERROR.get_or_init(|| Mutex::new(String::new()));
+    if let Ok(mut guard) = lock.lock() {
+        *guard = msg.to_string();
+    }
+}
 
 fn get_backend() -> Result<Arc<LlamaBackend>, String> {
     GLOBAL_BACKEND
@@ -218,11 +228,26 @@ pub extern "C" fn fluo_load_model(
     n_ctx: u32,
 ) -> i32 {
     let Some(path_str) = cstr_to_string(model_path) else {
+        set_last_error("Invalid UTF-8 model path");
         return -1;
     };
     let path = PathBuf::from(&path_str);
     if !path.is_file() {
+        set_last_error("Model file does not exist on disk");
         return -2;
+    }
+
+    let mut magic = [0u8; 4];
+    match File::open(&path).and_then(|mut f| f.read_exact(&mut magic)) {
+        Ok(()) if &magic == b"GGUF" => {}
+        Ok(()) => {
+            set_last_error("Invalid GGUF file header (download may be corrupted — please delete and re-download)");
+            return -5;
+        }
+        Err(e) => {
+            set_last_error(&format!("Cannot read model file: {e}"));
+            return -2;
+        }
     }
 
     let safe_ctx = n_ctx.clamp(1024, 4096);
@@ -237,14 +262,46 @@ pub extern "C" fn fluo_load_model(
     }
     *guard = None;
 
-    let Ok(backend) = get_backend() else {
-        return -3;
+    let backend = match get_backend() {
+        Ok(b) => b,
+        Err(e) => {
+            set_last_error(&e);
+            return -3;
+        }
     };
     let ngl = if n_gpu_layers < 0 { 99 } else { n_gpu_layers as u32 };
-    let model_params = LlamaModelParams::default().with_n_gpu_layers(ngl);
-    let Ok(model) = LlamaModel::load_from_file(&backend, &path, &model_params) else {
+    let attempts: Vec<(u32, bool, &str)> = if ngl > 0 {
+        vec![
+            (ngl, true, "metal-mmap"),
+            (0, true, "cpu-mmap"),
+            (0, false, "cpu-read"),
+        ]
+    } else {
+        vec![(0, true, "cpu-mmap"), (0, false, "cpu-read")]
+    };
+
+    let mut last_err = String::new();
+    let mut loaded_model = None;
+    for (layers, use_mmap, label) in attempts {
+        let model_params = LlamaModelParams::default()
+            .with_n_gpu_layers(layers)
+            .with_use_mmap(use_mmap);
+        match LlamaModel::load_from_file(&backend, &path, &model_params) {
+            Ok(model) => {
+                loaded_model = Some(model);
+                break;
+            }
+            Err(e) => {
+                last_err = format!("{label}: {e}");
+            }
+        }
+    }
+
+    let Some(model) = loaded_model else {
+        set_last_error(&last_err);
         return -4;
     };
+    set_last_error("");
     *guard = Some(LoadedModel {
         model_path: path_str,
         n_ctx: safe_ctx,
@@ -252,6 +309,15 @@ pub extern "C" fn fluo_load_model(
         model,
     });
     0
+}
+
+#[no_mangle]
+pub extern "C" fn fluo_last_error() -> *mut c_char {
+    let lock = LAST_LOAD_ERROR.get_or_init(|| Mutex::new(String::new()));
+    let msg = lock.lock().map(|g| g.clone()).unwrap_or_default();
+    CString::new(msg)
+        .unwrap_or_else(|_| CString::new("").unwrap())
+        .into_raw()
 }
 
 #[no_mangle]

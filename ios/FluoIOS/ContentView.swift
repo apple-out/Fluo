@@ -7,6 +7,8 @@ enum ActiveSheetKind: String, Identifiable {
     case tabs
     case menu
     case bookmarks
+    case bookmarkEditor
+    case siteSecurity
     case history
     case translationHistory
     case glossary
@@ -16,14 +18,77 @@ enum ActiveSheetKind: String, Identifiable {
     var id: String { rawValue }
 }
 
+private struct SelectAllURLField: UIViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let tf = UITextField(frame: .zero)
+        tf.delegate = context.coordinator
+        tf.placeholder = placeholder
+        tf.font = UIFont.preferredFont(forTextStyle: .subheadline)
+        tf.autocapitalizationType = .none
+        tf.autocorrectionType = .no
+        tf.spellCheckingType = .no
+        tf.keyboardType = .URL
+        tf.returnKeyType = .go
+        tf.clearButtonMode = .whileEditing
+        tf.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tf.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tf.addTarget(context.coordinator, action: #selector(Coordinator.textChanged(_:)), for: .editingChanged)
+        return tf
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        context.coordinator.parent = self
+        if uiView.placeholder != placeholder {
+            uiView.placeholder = placeholder
+        }
+        if !uiView.isFirstResponder && uiView.text != text {
+            uiView.text = text
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var parent: SelectAllURLField
+
+        init(_ parent: SelectAllURLField) {
+            self.parent = parent
+        }
+
+        @objc func textChanged(_ sender: UITextField) {
+            parent.text = sender.text ?? ""
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            DispatchQueue.main.async {
+                textField.selectAll(nil)
+            }
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            textField.resignFirstResponder()
+            parent.onSubmit()
+            return true
+        }
+    }
+}
+
 struct ContentView: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject private var catalog = ModelCatalog.shared
 
     @State private var urlDraft = ""
     @State private var activeSheet: ActiveSheetKind?
+    @State private var editingBookmark: BookmarkItem?
     @State private var showOnboarding = false
     @State private var dockDragOffset: CGFloat = 0
+    @FocusState private var findFieldFocused: Bool
 
     private func t(_ key: String) -> String {
         L10n.tr(store.uiLang, key)
@@ -36,12 +101,37 @@ struct ContentView: View {
         }
     }
 
+    private func openBookmarkEditor(for existing: BookmarkItem? = nil) {
+        editingBookmark = existing ?? store.currentBookmark()
+        if activeSheet != nil {
+            switchSheet(.bookmarkEditor)
+        } else {
+            activeSheet = .bookmarkEditor
+        }
+    }
+
     private var resolvedColorScheme: ColorScheme? {
         switch store.userData.appTheme {
         case .system: return nil
         case .light: return .light
         case .dark: return .dark
         }
+    }
+
+    private var isHttps: Bool {
+        store.activeTab.urlString.lowercased().hasPrefix("https://")
+    }
+
+    private var securityIconName: String {
+        if store.activeTab.isPrivate { return "eye.slash.fill" }
+        if store.activeTab.isStartPage { return "sparkles" }
+        return isHttps ? "lock.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private var securityIconColor: Color {
+        if store.activeTab.isPrivate { return FluoThemeTokens.violet }
+        if store.activeTab.isStartPage { return FluoThemeTokens.indigo }
+        return isHttps ? .green : .orange
     }
 
     var body: some View {
@@ -81,57 +171,99 @@ struct ContentView: View {
                     .padding(.top, 6)
                 }
 
-                WebViewContainer(webView: store.activeTab.webView)
-                    .id(store.activeTab.id)
-                    .ignoresSafeArea(edges: .bottom)
-            }
-
-            if store.isTranslating && store.translationTotal > 0 {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .tint(FluoThemeTokens.indigo)
-                    Text("\(t("tr.progress")) \(store.translationDone)/\(store.translationTotal)")
-                        .font(.caption.weight(.semibold))
-                    Button {
-                        store.cancelTranslation()
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .liquidGlassPill(tint: FluoThemeTokens.indigo)
-                .padding(.bottom, store.isDockCollapsed ? 58 : 84)
-            }
-
-            Group {
-                if store.isDockCollapsed {
-                    compactDockPill
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                if store.activeTab.isStartPage {
+                    StartPageView(
+                        store: store,
+                        catalog: catalog,
+                        openSettings: { activeSheet = .settings },
+                        openBookmarks: { activeSheet = .bookmarks }
+                    )
                 } else {
-                    bottomDock
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    WebViewContainer(webView: store.activeTab.webView)
+                        .id(store.activeTab.id)
+                        .ignoresSafeArea(edges: .bottom)
                 }
             }
-            .animation(.spring(response: 0.30, dampingFraction: 0.84), value: store.isDockCollapsed)
+
+            VStack(spacing: 8) {
+                if store.isTranslating {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .tint(FluoThemeTokens.indigo)
+                        if store.translationTotal > 0 {
+                            Text("\(t("tr.progress")) \(store.translationDone)/\(store.translationTotal)")
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                        } else {
+                            Text(store.translationStatusText.isEmpty ? t("tr.preparing") : store.translationStatusText)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                        }
+                        Button {
+                            store.cancelTranslation()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .liquidGlassPill(tint: FluoThemeTokens.indigo)
+                }
+
+                if let err = store.translationError {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                        Text(err)
+                            .font(.caption)
+                            .lineLimit(2)
+                        Spacer(minLength: 4)
+                        Button(t("tr.openSettings")) {
+                            store.translationError = nil
+                            activeSheet = .settings
+                        }
+                        .font(.caption2.bold())
+                        .foregroundStyle(FluoThemeTokens.indigo)
+                        Button {
+                            store.translationError = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .liquidGlass(cornerRadius: 16, tint: .red)
+                    .padding(.horizontal, 14)
+                }
+
+                safariBottomChrome
+            }
         }
         .preferredColorScheme(resolvedColorScheme)
         .onAppear {
-            urlDraft = store.activeTab.urlString
+            syncDraftFromActiveTab()
             if !store.onboardingCompleted {
                 showOnboarding = true
             }
         }
-        .onChange(of: store.activeTab.urlString) { nextUrl in
-            urlDraft = nextUrl
+        .onChange(of: store.activeTab.urlString) { _ in
+            syncDraftFromActiveTab()
         }
         .onChange(of: store.activeTabId) { _ in
-            urlDraft = store.activeTab.urlString
+            syncDraftFromActiveTab()
             store.isDockCollapsed = false
         }
         .onChange(of: store.showFindBar) { show in
-            if show { store.isDockCollapsed = false }
+            if show {
+                store.isDockCollapsed = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    findFieldFocused = true
+                }
+            }
         }
         .onChange(of: store.isPickingRegion) { picking in
             if picking { store.isDockCollapsed = false }
@@ -154,11 +286,23 @@ struct ContentView: View {
                         .presentationDetents([.medium, .large])
                 case .menu:
                     MenuSheet(store: store, openSheet: { target in
-                        switchSheet(target)
+                        if target == .bookmarkEditor {
+                            openBookmarkEditor(for: store.currentBookmark())
+                        } else {
+                            switchSheet(target)
+                        }
                     })
                     .presentationDetents([.medium, .large])
                 case .bookmarks:
-                    BookmarksSheet(store: store)
+                    BookmarksSheet(store: store, onEdit: { item in
+                        openBookmarkEditor(for: item)
+                    })
+                case .bookmarkEditor:
+                    BookmarkEditorSheet(store: store, existing: editingBookmark)
+                        .presentationDetents([.medium])
+                case .siteSecurity:
+                    SiteSecuritySheet(store: store)
+                        .presentationDetents([.medium])
                 case .history:
                     HistorySheet(store: store)
                 case .translationHistory:
@@ -180,12 +324,17 @@ struct ContentView: View {
         }
     }
 
+    private func syncDraftFromActiveTab() {
+        urlDraft = store.activeTab.isStartPage ? "" : store.activeTab.urlString
+    }
+
     private var findBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
                 .font(.footnote.weight(.semibold))
             TextField(t("find.placeholder"), text: $store.findQuery)
+                .focused($findFieldFocused)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
@@ -196,17 +345,44 @@ struct ContentView: View {
                 .onSubmit {
                     store.runFindInPage(action: "next")
                 }
-            if store.findTotal > 0 {
+            if !store.findQuery.trimmingCharacters(in: .whitespaces).isEmpty {
                 Text("\(store.findCurrent)/\(store.findTotal)")
                     .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(store.findTotal > 0 ? Color.primary : Color.secondary)
             }
-            Button { store.runFindInPage(action: "prev") } label: { Image(systemName: "chevron.up") }
-            Button { store.runFindInPage(action: "next") } label: { Image(systemName: "chevron.down") }
-            Button { store.closeFindBar() } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+            Button {
+                store.runFindInPage(action: "prev")
+            } label: {
+                Image(systemName: "chevron.up")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.findTotal == 0)
+
+            Button {
+                store.runFindInPage(action: "next")
+            } label: {
+                Image(systemName: "chevron.down")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(store.findTotal == 0)
+
+            Button {
+                findFieldFocused = false
+                store.closeFindBar()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
         .liquidGlassPill()
     }
 
@@ -222,7 +398,7 @@ struct ContentView: View {
             .onEnded { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+                withAnimation(.interactiveSpring(response: 0.30, dampingFraction: 0.84)) {
                     dockDragOffset = 0
                 }
                 if dy < -42 && abs(dy) > abs(dx) {
@@ -252,101 +428,45 @@ struct ContentView: View {
         }
     }
 
-    private var compactDockPill: some View {
+    private var safariBottomChrome: some View {
+        let collapsed = store.isDockCollapsed && !store.activeTab.isStartPage
         let displayHost = URL(string: store.activeTab.urlString)?.host ?? store.activeTab.title
-        return HStack(spacing: 8) {
-            Image(systemName: store.activeTab.isPrivate ? "eye.slash.fill" : (store.isCurrentHostAdBlockEnabled ? "shield.checkered" : "globe"))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(store.activeTab.isPrivate ? FluoThemeTokens.violet : FluoThemeTokens.indigo)
 
-            Text(displayHost.isEmpty ? "Fluo" : displayHost)
-                .font(.caption.weight(.semibold))
-                .lineLimit(1)
-
-            if store.activeTab.displayMode != .original {
-                Image(systemName: "character.bubble.fill")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(FluoThemeTokens.indigo)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 9)
-        .liquidGlassPill(
-            tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
-        )
-        .contentShape(Capsule())
-        .onTapGesture(count: 2) {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            store.activeTab.scrollToTop()
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
-                store.isDockCollapsed = false
-            }
-        }
-        .onTapGesture(count: 1) {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.spring(response: 0.30, dampingFraction: 0.84)) {
-                store.isDockCollapsed = false
-            }
-        }
-        .offset(x: dockDragOffset)
-        .gesture(dockDragGesture)
-        .padding(.bottom, 6)
-    }
-
-    private var bottomDock: some View {
-        LiquidGlassGroup(spacing: 6) {
-            HStack(spacing: 6) {
+        return VStack(spacing: collapsed ? 0 : 8) {
+            // Safari-style Top Row: Address & Security Pill (morphs smoothly into compact pill when scrolled)
+            HStack(spacing: 8) {
                 Button {
-                    store.activeTab.webView.goBack()
+                    activeSheet = .siteSecurity
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 36, height: 36)
+                    Image(systemName: securityIconName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(securityIconColor)
+                        .frame(width: 24, height: 24)
                         .contentShape(Circle())
                 }
-                .buttonStyle(LiquidPressButtonStyle())
-                .liquidGlassCircle(interactive: true)
-                .disabled(!store.activeTab.canGoBack)
-                .opacity(store.activeTab.canGoBack ? 1.0 : 0.4)
-                .contextMenu {
-                    backForwardContextMenu(
-                        items: Array(store.activeTab.webView.backForwardList.backList.reversed().prefix(8))
-                    )
+                .buttonStyle(.plain)
+
+                if collapsed {
+                    Text(displayHost.isEmpty ? "Fluo" : displayHost)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                } else {
+                    SelectAllURLField(
+                        text: $urlDraft,
+                        placeholder: t("bar.urlPlaceholder")
+                    ) {
+                        store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
+                    }
+                    .frame(height: 24)
                 }
 
-                Button {
-                    store.activeTab.webView.goForward()
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(LiquidPressButtonStyle())
-                .liquidGlassCircle(interactive: true)
-                .disabled(!store.activeTab.canGoForward)
-                .opacity(store.activeTab.canGoForward ? 1.0 : 0.4)
-                .contextMenu {
-                    backForwardContextMenu(
-                        items: Array(store.activeTab.webView.backForwardList.forwardList.prefix(8))
-                    )
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: store.activeTab.isPrivate ? "eye.slash.fill" : (store.isCurrentHostAdBlockEnabled ? "shield.checkered" : "globe"))
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(store.activeTab.isPrivate ? FluoThemeTokens.violet : FluoThemeTokens.indigo)
-
-                    TextField(t("bar.urlPlaceholder"), text: $urlDraft)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .submitLabel(.go)
-                        .font(.subheadline)
-                        .onSubmit {
-                            store.activeTab.navigate(input: urlDraft, searchEngine: store.userData.searchEngine)
-                        }
-
+                if collapsed {
+                    if store.activeTab.displayMode != .original {
+                        Image(systemName: "character.bubble.fill")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(FluoThemeTokens.indigo)
+                    }
+                } else if !store.activeTab.isStartPage {
                     Button {
                         if store.activeTab.isLoading {
                             store.activeTab.webView.stopLoading()
@@ -362,77 +482,165 @@ struct ContentView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 6)
-                .liquidGlassPill(
-                    tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
-                )
-                .gesture(dockDragGesture)
+            }
+            .padding(.horizontal, collapsed ? 14 : 12)
+            .padding(.vertical, collapsed ? 8 : 7)
+            .frame(maxWidth: collapsed ? 230 : .infinity)
+            .liquidGlassPill(
+                tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear
+            )
+            .contentShape(Capsule())
+            .onTapGesture(count: 2) {
+                guard collapsed else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                store.activeTab.scrollToTop()
+                store.isDockCollapsed = false
+            }
+            .onTapGesture(count: 1) {
+                guard collapsed else { return }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                store.isDockCollapsed = false
+            }
+            .gesture(dockDragGesture)
 
-                Button {
-                    activeSheet = .translate
-                } label: {
-                    Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(LiquidPressButtonStyle())
-                .liquidGlassCircle(
-                    tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
-                    interactive: true,
-                    prominent: store.activeTab.displayMode != .original
-                )
-                .contextMenu {
+            // Safari-style Bottom Action Toolbar Row (smoothly height/opacity collapses on scroll down)
+            LiquidGlassGroup(spacing: 10) {
+                HStack(spacing: 0) {
                     Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        store.translateActiveTab(bilingual: false)
+                        store.activeTab.webView.goBack()
                     } label: {
-                        Label(t("tr.inline"), systemImage: "sparkles")
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
                     }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(interactive: true)
+                    .disabled(!store.activeTab.canGoBack)
+                    .opacity(store.activeTab.canGoBack ? 1.0 : 0.38)
+                    .contextMenu {
+                        backForwardContextMenu(
+                            items: Array(store.activeTab.webView.backForwardList.backList.reversed().prefix(8))
+                        )
+                    }
+
+                    Spacer(minLength: 4)
+
                     Button {
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        store.translateActiveTab(bilingual: true)
+                        store.activeTab.goForwardFromCurrent()
                     } label: {
-                        Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
                     }
-                    if store.activeTab.displayMode != .original {
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(interactive: true)
+                    .disabled(!store.activeTab.canGoForward)
+                    .opacity(store.activeTab.canGoForward ? 1.0 : 0.38)
+                    .contextMenu {
+                        backForwardContextMenu(
+                            items: Array(store.activeTab.webView.backForwardList.forwardList.prefix(8))
+                        )
+                    }
+
+                    Spacer(minLength: 4)
+
+                    Button {
+                        activeSheet = .translate
+                    } label: {
+                        Image(systemName: store.activeTab.displayMode == .original ? "character.bubble" : "character.bubble.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(store.activeTab.displayMode == .original ? Color.primary : Color.white)
+                            .frame(width: 44, height: 40)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(
+                        tint: store.activeTab.displayMode == .original ? .clear : FluoThemeTokens.indigo,
+                        interactive: true,
+                        prominent: store.activeTab.displayMode != .original
+                    )
+                    .contextMenu {
                         Button {
-                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                            store.restoreOriginal()
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            store.translateActiveTab(bilingual: false)
                         } label: {
-                            Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                            Label(t("tr.inline"), systemImage: "sparkles")
+                        }
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            store.translateActiveTab(bilingual: true)
+                        } label: {
+                            Label(t("tr.bilingual"), systemImage: "rectangle.split.2x1")
+                        }
+                        if store.activeTab.displayMode != .original {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                store.restoreOriginal()
+                            } label: {
+                                Label(t("tr.original"), systemImage: "arrow.uturn.backward")
+                            }
                         }
                     }
-                }
 
-                Button {
-                    activeSheet = .tabs
-                } label: {
-                    Text("\(store.activeWorkspaceTabs.count)")
-                        .font(.caption.bold())
-                        .frame(width: 34, height: 34)
-                        .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                }
-                .buttonStyle(LiquidPressButtonStyle())
-                .liquidGlass(cornerRadius: 11, interactive: true)
+                    Spacer(minLength: 4)
 
-                Button {
-                    activeSheet = .menu
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .bold))
-                        .frame(width: 36, height: 36)
-                        .contentShape(Circle())
+                    Button {
+                        openBookmarkEditor(for: store.currentBookmark())
+                    } label: {
+                        Image(systemName: store.isCurrentPageBookmarked ? "star.fill" : "star")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(store.isCurrentPageBookmarked ? .white : .primary)
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(
+                        tint: store.isCurrentPageBookmarked ? FluoThemeTokens.indigo : .clear,
+                        interactive: true,
+                        prominent: store.isCurrentPageBookmarked
+                    )
+                    .disabled(store.activeTab.isStartPage)
+                    .opacity(store.activeTab.isStartPage ? 0.38 : 1.0)
+
+                    Spacer(minLength: 4)
+
+                    Button {
+                        activeSheet = .tabs
+                    } label: {
+                        Text("\(store.activeWorkspaceTabs.count)")
+                            .font(.caption.bold())
+                            .frame(width: 40, height: 40)
+                            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlass(cornerRadius: 13, interactive: true)
+
+                    Spacer(minLength: 4)
+
+                    Button {
+                        activeSheet = .menu
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(LiquidPressButtonStyle())
+                    .liquidGlassCircle(interactive: true)
                 }
-                .buttonStyle(LiquidPressButtonStyle())
-                .liquidGlassCircle(interactive: true)
             }
+            .frame(height: collapsed ? 0 : 44)
+            .opacity(collapsed ? 0 : 1)
+            .scaleEffect(collapsed ? 0.92 : 1.0, anchor: .bottom)
+            .clipped()
+            .allowsHitTesting(!collapsed)
         }
         .liquidGlassDockChrome(tint: store.activeTab.isPrivate ? FluoThemeTokens.violet : .clear)
         .offset(x: dockDragOffset)
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+        .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.86), value: store.isDockCollapsed)
     }
 }

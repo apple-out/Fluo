@@ -27,6 +27,7 @@
     type FeedbackDraft,
     type FindResult,
     type HardwareProfile,
+    type HistoryItem,
     type HyMt2ModelState,
     type ModelDownloadProgress,
     type ModelInfo,
@@ -37,10 +38,12 @@
   } from "$lib/types";
 
   type Status = { kind: "info" | "success" | "error"; text: string };
-  type InternalPageKind = "bookmarks" | "visits" | "downloads" | "glossary" | "history" | "settings";
+  type InternalPageKind = "start" | "bookmarks" | "visits" | "downloads" | "glossary" | "history" | "settings";
   type OverlayKind =
     | "menu"
     | "adblock"
+    | "site-security"
+    | "bookmark-edit"
     | "translate"
     | "workspace"
     | "tab-menu"
@@ -52,7 +55,7 @@
     | "rename-window"
     | "export-project"
     | "onboarding"
-    | InternalPageKind;
+    | Exclude<InternalPageKind, "start">;
 
   type PopupBlockedNotice = {
     tabId: string;
@@ -191,6 +194,23 @@
   let headerEl = $state<HTMLElement | null>(null);
   let addressInput = $state<HTMLInputElement | null>(null);
   let addressFocused = $state(false);
+  let justFocusedAddress = false;
+  let startQuery = $state("");
+  let recentVisits = $state<HistoryItem[]>([]);
+  let bmDraftId = $state<string | null>(null);
+  let bmDraftTitle = $state("");
+  let bmDraftUrl = $state("");
+  let bmDraftFolder = $state("");
+  let bmDraftFavorite = $state(false);
+  let bmDraftCreatedAt = $state(0);
+
+  function trLocal(koText: string, enText: string, jaText: string, zhText: string): string {
+    const lang = getUiLang();
+    if (lang === "en") return enText;
+    if (lang === "ja") return jaText;
+    if (lang === "zh-CN") return zhText;
+    return koText;
+  }
   let headerHeight = $state(88);
   let bookmarks = $state<Bookmark[]>([]);
   let bookmarkBarVisible = $state(false);
@@ -830,14 +850,7 @@
   }
 
   function goHome() {
-    const engine = settings.searchEngine;
-    void navigate(
-      engine === "bing"
-        ? "https://www.bing.com/"
-        : engine === "duckduckgo"
-          ? "https://duckduckgo.com/"
-          : "https://www.google.com/",
-    );
+    void navigate("tb://start");
   }
 
   async function reorderTab(tabId: string, beforeId: string | null) {
@@ -1666,6 +1679,8 @@
       }
       if (
         kind === "bookmarks" ||
+        kind === "bookmark-edit" ||
+        kind === "site-security" ||
         kind === "workspace" ||
         kind === "tab-menu" ||
         kind === "chrome-menu" ||
@@ -1676,6 +1691,34 @@
         kind === "feedback"
       ) {
         applyBrowser(await api.browserState());
+      }
+      if (kind === "bookmark-edit") {
+        await loadBookmarks();
+        const curUrl = activeTab?.url ?? "";
+        let found: Bookmark | undefined;
+        try {
+          const norm = normalizeBookmarkUrl(curUrl);
+          found = bookmarks.find((b) => {
+            try { return normalizeBookmarkUrl(b.url) === norm; } catch { return false; }
+          });
+        } catch {
+          found = bookmarks.find((b) => b.url === curUrl);
+        }
+        if (found) {
+          bmDraftId = found.id;
+          bmDraftTitle = found.title;
+          bmDraftUrl = found.url;
+          bmDraftFolder = found.folder;
+          bmDraftFavorite = found.favorite;
+          bmDraftCreatedAt = found.createdAt;
+        } else {
+          bmDraftId = null;
+          bmDraftTitle = activeTab?.title || curUrl;
+          bmDraftUrl = curUrl;
+          bmDraftFolder = "";
+          bmDraftFavorite = false;
+          bmDraftCreatedAt = 0;
+        }
       }
       if (kind === "feedback" && !feedbackDraft) {
         feedbackDraft = {
@@ -1928,26 +1971,41 @@
 
   async function saveCurrentBookmark() {
     if (!activeTab) return;
+    await openOverlay("bookmark-edit");
+  }
+
+  async function submitBookmarkDraft() {
+    const cleanUrl = bmDraftUrl.trim();
+    if (!cleanUrl) return;
     try {
-      const normalized = normalizeBookmarkUrl(activeTab.url);
-      const currentBookmarks = await api.listBookmarks();
-      if (currentBookmarks.some((bookmark) => {
-        try {
-          return normalizeBookmarkUrl(bookmark.url) === normalized;
-        } catch {
-          return false;
-        }
-      })) {
-        notify("info", t("toast.bookmarkAlreadySaved"));
-        return;
-      }
+      const normalized = cleanUrl.startsWith("tb://") ? cleanUrl : normalizeBookmarkUrl(cleanUrl);
       const now = Math.floor(Date.now() / 1000);
-      await api.saveBookmark({ id: crypto.randomUUID(), url: normalized,
-        title: activeTab.title || normalized, folder: "", favorite: false,
-        createdAt: now, updatedAt: now });
+      await api.saveBookmark({
+        id: bmDraftId ?? crypto.randomUUID(),
+        url: normalized,
+        title: bmDraftTitle.trim() || normalized,
+        folder: bmDraftFolder.trim(),
+        favorite: bmDraftFavorite,
+        createdAt: bmDraftCreatedAt || now,
+        updatedAt: now,
+      });
       await loadBookmarks();
       notify("success", t("toast.bookmarkSaved"));
-    } catch (cause) { notify("error", errorMessage(cause)); }
+      await closeOverlay();
+    } catch (cause) {
+      notify("error", errorMessage(cause));
+    }
+  }
+
+  async function deleteBookmarkDraft() {
+    if (!bmDraftId) return;
+    try {
+      await api.deleteBookmark(bmDraftId);
+      await loadBookmarks();
+      await closeOverlay();
+    } catch (cause) {
+      notify("error", errorMessage(cause));
+    }
   }
 
   onMount(() => {
@@ -1974,6 +2032,12 @@
         applySettings(view);
       }).catch(() => {});
       void api.browserState().then(applyBrowser).catch(() => {});
+      if (pageKind === "start") {
+        void loadBookmarks();
+        void api.listHistory("", 12).then((items) => {
+          recentVisits = items;
+        }).catch(() => {});
+      }
       let unlistenPageSettings: UnlistenFn | undefined;
       let unlistenPagePrefs: UnlistenFn | undefined;
       listen<SettingsView>("settings-updated", (event) => {
@@ -2605,7 +2669,66 @@
 
 {#if pageKind}
   <div class="internal-page-root" class:tinted={glassTinted}>
-    {#if pageKind === "settings" && settingsView}
+    {#if pageKind === "start"}
+      <div class="start-page">
+        <div class="start-hero">
+          <h1 class="start-logo">Fluo</h1>
+          <p class="start-sub">{t("app.tagline")}</p>
+        </div>
+        <form
+          class="start-search"
+          onsubmit={(event) => {
+            event.preventDefault();
+            const q = startQuery.trim();
+            if (q) void api.navigate(q);
+          }}
+        >
+          <input
+            type="text"
+            bind:value={startQuery}
+            placeholder={t("chrome.addressPlaceholder")}
+            spellcheck="false"
+            autocomplete="off"
+          />
+          <button type="submit">{t("common.search")}</button>
+        </form>
+        <section class="start-sec">
+          <h2>{trLocal("빠른 실행", "Quick Launch", "クイック起動", "快速访问")}</h2>
+          <div class="start-grid">
+            <button type="button" class="start-card" onclick={() => void api.navigate("https://www.google.com/")}>Google</button>
+            <button type="button" class="start-card" onclick={() => void api.navigate("https://en.wikipedia.org/")}>Wikipedia</button>
+            <button type="button" class="start-card" onclick={() => void api.navigate("https://namu.wiki/")}>나무위키</button>
+            <button type="button" class="start-card" onclick={() => void api.navigate("https://github.com/")}>GitHub</button>
+          </div>
+        </section>
+        {#if bookmarks.length > 0}
+          <section class="start-sec">
+            <h2>{trLocal("북마크", "Bookmarks", "ブックマーク", "书签")}</h2>
+            <div class="start-grid">
+              {#each bookmarks.slice(0, 8) as bm (bm.id)}
+                <button type="button" class="start-card" onclick={() => void api.navigate(bm.url)}>
+                  <span class="start-card-title">{bm.title || bm.url}</span>
+                  <span class="start-card-sub">{bm.folder || ""}</span>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}
+        {#if recentVisits.length > 0}
+          <section class="start-sec">
+            <h2>{trLocal("최근 방문", "Recent Visits", "最近の履歴", "最近访问")}</h2>
+            <div class="start-list">
+              {#each recentVisits.slice(0, 6) as item (item.id)}
+                <button type="button" class="start-row" onclick={() => void api.navigate(item.url)}>
+                  <span class="start-card-title">{item.title || item.url}</span>
+                  <span class="start-card-sub">{item.url}</span>
+                </button>
+              {/each}
+            </div>
+          </section>
+        {/if}
+      </div>
+    {:else if pageKind === "settings" && settingsView}
       <SettingsPanel
         embedded={true}
         view={settingsView}
@@ -2849,7 +2972,14 @@
               <span class="chip-count">{visibleTabs.length}</span>
             </button>
           {/if}
-          <span class="scheme" class:insecure={!secure}>
+          <button
+            class="scheme"
+            class:insecure={!secure && !activeTab?.url.startsWith("tb://")}
+            type="button"
+            aria-label={trLocal("사이트 보안 정보", "Site security", "サイトセキュリティ", "站点安全信息")}
+            title={trLocal("사이트 보안 정보 보기", "View site security info", "サイトセキュリティを表示", "查看站点安全信息")}
+            onclick={(e) => void openOverlay("site-security", anchorOf(e))}
+          >
             {#if secure}
               <svg viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M4.5 7V5.5a3.5 3.5 0 0 1 7 0V7" />
@@ -2861,16 +2991,26 @@
                 <path d="M2.8 8h10.4M8 2.6c1.7 1.6 2.5 3.4 2.5 5.4S9.7 11.8 8 13.4C6.3 11.8 5.5 10 5.5 8S6.3 4.2 8 2.6Z" />
               </svg>
             {/if}
-          </span>
+          </button>
           <input
             bind:this={addressInput}
             bind:value={address}
-            onfocus={() => {
+            onfocus={(event) => {
               addressFocused = true;
+              justFocusedAddress = true;
+              (event.currentTarget as HTMLInputElement).select();
               void refreshSuggestions();
+            }}
+            onmouseup={(event) => {
+              if (justFocusedAddress) {
+                justFocusedAddress = false;
+                event.preventDefault();
+                (event.currentTarget as HTMLInputElement).select();
+              }
             }}
             onblur={() => {
               addressFocused = false;
+              justFocusedAddress = false;
               suggestions = [];
               suggestionIndex = -1;
             }}
@@ -2915,7 +3055,7 @@
             type="button"
             aria-label={t("chrome.bookmarkSave")}
             title={isCurrentBookmarked ? t("chrome.bookmarkSaved") : t("chrome.bookmarkSaveTitle")}
-            onclick={saveCurrentBookmark}
+            onclick={(e) => void openOverlay("bookmark-edit", anchorOf(e))}
             disabled={!activeTab}
           >
             {isCurrentBookmarked ? "★" : "☆"}
@@ -3329,6 +3469,101 @@
           <button onclick={() => { void exportAppData(); }}>{t("menu.exportAll")}</button>
           <button onclick={() => { exportProject(); }}>{t("menu.exportPage")}</button>
         </nav>
+      </div>
+    {:else if overlayKind === "site-security"}
+      {@const curUrl = activeTab?.url ?? ""}
+      {@const isInternalUrl = curUrl.startsWith("tb://")}
+      {@const isHttpsSite = curUrl.startsWith("https://")}
+      {@const curHost = (() => { try { return curUrl ? new URL(curUrl).hostname.toLowerCase() : ""; } catch { return ""; } })()}
+      {@const siteAllowlisted = Boolean(curHost && settings.adBlockAllowlist.some((e) => curHost === e || curHost.endsWith(`.${e}`)))}
+      <div
+        class="overlay-menu-dismiss"
+        role="presentation"
+        onclick={(event) => {
+          if (event.target === event.currentTarget) void closeOverlay();
+        }}
+      >
+        <div class="overlay-translate" role="dialog" aria-label={trLocal("사이트 보안 정보", "Site Security", "サイトセキュリティ", "站点安全信息")} style={popupPositionStyle("left", 300)}>
+          <div class="tp-header">
+            <strong>{isInternalUrl ? "Fluo" : (curHost || curUrl)}</strong>
+            <button type="button" class="tp-close" aria-label={t("common.close")} onclick={() => void closeOverlay()}>×</button>
+          </div>
+          <p class="action-modal-desc" style="margin: 8px 0;">
+            {#if isInternalUrl}
+              {trLocal("Fluo 로컬 내부 페이지입니다.", "Fluo internal browser page.", "Fluo のローカルページです。", "这是 Fluo 本地页面。")}
+            {:else if isHttpsSite}
+              🔒 {trLocal("HTTPS 암호화로 안전하게 연결되었습니다.", "Connection is encrypted via HTTPS.", "HTTPS で暗号化された安全な接続です。", "已通过 HTTPS 安全加密连接。")}
+            {:else}
+              ⚠️ {trLocal("암호화되지 않은 HTTP 연결입니다.", "Connection is not secure (HTTP).", "暗号化されていない HTTP 接続です。", "未加密的 HTTP 连接（不安全）。")}
+            {/if}
+          </p>
+          <div class="tp-actions">
+            {#if curHost && !isInternalUrl}
+              <button
+                type="button"
+                onclick={() => {
+                  void api.toggleAdblockSite(curUrl).then((view) => {
+                    onSettingsSaved(view);
+                    void closeOverlay();
+                    void reload();
+                  }).catch((e) => notify("error", errorMessage(e)));
+                }}
+              >
+                {siteAllowlisted ? t("adblock.reenableSite") : t("adblock.allowSite", { host: curHost })}
+              </button>
+            {/if}
+            {#if curUrl}
+              <button type="button" onclick={() => { void copyCurrentUrl(); void closeOverlay(); }}>{t("common.copy")}</button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    {:else if overlayKind === "bookmark-edit"}
+      <div
+        class="overlay-menu-dismiss"
+        role="presentation"
+        onclick={(event) => {
+          if (event.target === event.currentTarget) void closeOverlay();
+        }}
+      >
+        <div
+          class="overlay-translate"
+          role="dialog"
+          aria-label={trLocal("북마크 편집", "Edit Bookmark", "ブックマーク編集", "编辑书签")}
+          style={popupPositionStyle("right", 300)}
+        >
+          <form
+            style="display:grid;gap:10px;"
+            onsubmit={(event) => {
+              event.preventDefault();
+              void submitBookmarkDraft();
+            }}
+          >
+            <div class="tp-header">
+              <strong>{bmDraftId ? trLocal("북마크 편집", "Edit Bookmark", "ブックマーク編集", "编辑书签") : trLocal("북마크 추가", "Add Bookmark", "ブックマーク追加", "添加书签")}</strong>
+              <button type="button" class="tp-close" aria-label={t("common.close")} onclick={() => void closeOverlay()}>×</button>
+            </div>
+            <label class="tp-field">
+              <span>{trLocal("이름", "Name", "名前", "名称")}</span>
+              <input type="text" bind:value={bmDraftTitle} />
+            </label>
+            <label class="tp-field">
+              <span>URL</span>
+              <input type="text" bind:value={bmDraftUrl} />
+            </label>
+            <label class="tp-field">
+              <span>{trLocal("폴더", "Folder", "フォルダ", "文件夹")}</span>
+              <input type="text" bind:value={bmDraftFolder} placeholder="Default" />
+            </label>
+            <div class="tp-actions">
+              <button class="primary" type="submit">{t("common.save")}</button>
+              {#if bmDraftId}
+                <button type="button" onclick={() => void deleteBookmarkDraft()}>{t("common.delete")}</button>
+              {/if}
+              <button type="button" onclick={() => void closeOverlay()}>{t("common.cancel")}</button>
+            </div>
+          </form>
+        </div>
       </div>
     {:else if overlayKind === "adblock"}
       {@const currentHost = (() => {
@@ -5020,12 +5255,108 @@
     display: grid;
     place-items: center;
     flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
     color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .scheme:hover {
+    background: var(--surface-strong);
+    color: var(--text);
   }
 
   .scheme.insecure {
     color: #d97706;
   }
+
+  .start-page {
+    max-width: 820px;
+    height: 100%;
+    margin: 0 auto;
+    padding: 40px 24px 36px;
+    overflow-y: auto;
+    display: grid;
+    gap: 22px;
+    align-content: start;
+  }
+
+  .start-hero { display: grid; gap: 4px; }
+  .start-logo {
+    margin: 0;
+    font-size: 40px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #5b8cff, #7c3aed, #0ea5e9);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .start-sub { margin: 0; color: var(--text-soft); font-size: 13px; }
+  .start-search {
+    display: flex;
+    gap: 8px;
+    padding: 6px;
+    border-radius: 999px;
+    border: 1px solid var(--glass-border-strong);
+    background: var(--glass-pill);
+  }
+  .start-search input {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    padding: 8px 14px;
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+  }
+  .start-search button {
+    border: 0;
+    border-radius: 999px;
+    padding: 8px 18px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .start-sec { display: grid; gap: 10px; }
+  .start-sec h2 { margin: 0; font-size: 12px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+  .start-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .start-card {
+    text-align: left;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-pill);
+    color: var(--text);
+    font-weight: 600;
+    cursor: pointer;
+    display: grid;
+    gap: 4px;
+  }
+  .start-card:hover { border-color: var(--accent); }
+  .start-list { display: grid; gap: 6px; }
+  .start-row {
+    text-align: left;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-pill);
+    color: var(--text);
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .start-card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .start-card-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text-soft); }
 
   .address input {
     flex: 1;

@@ -9,7 +9,7 @@ enum InlineDisplayMode: String {
     case bilingual
 }
 
-final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDelegate, UIGestureRecognizerDelegate {
+final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDelegate, WKUIDelegate, UIGestureRecognizerDelegate {
     let id = UUID()
     let webView: WKWebView
 
@@ -26,10 +26,15 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     @Published var canGoForward: Bool = false
     @Published var displayMode: InlineDisplayMode = .original
 
+    var isStartPage: Bool {
+        urlString == FluoUserDataSnapshot.startPageURL
+    }
+
     var onVisitRecorded: ((String, String) -> Void)?
     var onNavigationSyncAdBlock: ((WKWebView, String?) -> Void)?
     var onScrollDockCollapseChanged: ((Bool) -> Void)?
     var onTwoFingerTap: (() -> Void)?
+    var onOpenNewTab: ((URL) -> Void)?
 
     private var obsProgress: NSKeyValueObservation?
     private var obsLoading: NSKeyValueObservation?
@@ -48,10 +53,11 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         self.workspaceId = workspaceId
         self.isPrivate = isPrivate
         self.urlString = initialURL.absoluteString
-        self.title = initialURL.host ?? "Fluo"
+        self.title = initialURL.absoluteString == FluoUserDataSnapshot.startPageURL ? "Fluo" : (initialURL.host ?? "Fluo")
         super.init()
 
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         refreshControl.addTarget(self, action: #selector(handlePullToRefresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
@@ -68,32 +74,45 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         }
         obsLoading = webView.observe(\.isLoading, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in
-                self?.isLoading = wv.isLoading
-                self?.canGoBack = wv.canGoBack
-                self?.canGoForward = wv.canGoForward
-                if !wv.isLoading, self?.refreshControl.isRefreshing == true {
-                    self?.refreshControl.endRefreshing()
+                guard let self else { return }
+                self.isLoading = wv.isLoading
+                if !self.isStartPage {
+                    self.canGoBack = wv.canGoBack
+                    self.canGoForward = wv.canGoForward
+                }
+                if !wv.isLoading, self.refreshControl.isRefreshing {
+                    self.refreshControl.endRefreshing()
                 }
             }
         }
         obsTitle = webView.observe(\.title, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in
-                if let t = wv.title, !t.isEmpty { self?.title = t }
+                guard let self, !self.isStartPage else { return }
+                if let t = wv.title, !t.isEmpty { self.title = t }
             }
         }
         obsUrl = webView.observe(\.url, options: [.new]) { [weak self] wv, _ in
             Task { @MainActor in
-                if let u = wv.url?.absoluteString { self?.urlString = u }
-                self?.canGoBack = wv.canGoBack
-                self?.canGoForward = wv.canGoForward
+                guard let self, !self.isStartPage else { return }
+                if let u = wv.url?.absoluteString, !u.isEmpty, u != "about:blank" {
+                    self.urlString = u
+                }
+                self.canGoBack = wv.canGoBack
+                self.canGoForward = wv.canGoForward
             }
         }
-        webView.load(URLRequest(url: initialURL))
+        if initialURL.absoluteString != FluoUserDataSnapshot.startPageURL {
+            webView.load(URLRequest(url: initialURL))
+        }
     }
 
     func navigate(input: String, searchEngine: SearchEngine) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        if trimmed == FluoUserDataSnapshot.startPageURL || trimmed == "tb://start" {
+            openStartPage()
+            return
+        }
         let url: URL?
         if trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") {
             url = URL(string: trimmed)
@@ -103,8 +122,54 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
             url = searchEngine.searchURL(query: trimmed)
         }
         if let target = url {
+            displayMode = .original
+            urlString = target.absoluteString
+            canGoBack = webView.canGoBack || webView.url != nil
             webView.load(URLRequest(url: target))
         }
+    }
+
+    func openStartPage() {
+        webView.stopLoading()
+        displayMode = .original
+        urlString = FluoUserDataSnapshot.startPageURL
+        title = "Fluo"
+        progress = 0
+        isLoading = false
+        canGoBack = false
+        canGoForward = webView.url != nil
+    }
+
+    func goForwardFromCurrent() {
+        if isStartPage, let wvUrl = webView.url {
+            urlString = wvUrl.absoluteString
+            title = webView.title ?? (wvUrl.host ?? "Fluo")
+            canGoBack = true
+            canGoForward = webView.canGoForward
+        } else {
+            webView.goForward()
+        }
+    }
+
+    nonisolated func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url {
+            let scheme = url.scheme?.lowercased() ?? ""
+            if scheme == "http" || scheme == "https" {
+                if navigationAction.targetFrame == nil {
+                    Task { @MainActor in
+                        self.onOpenNewTab?(url)
+                    }
+                } else {
+                    webView.load(navigationAction.request)
+                }
+            }
+        }
+        return nil
     }
 
     func applyDesktopMode(_ desktop: Bool) {
@@ -205,7 +270,10 @@ final class BrowserStore: ObservableObject {
     @Published var isTranslating = false
     @Published var translationDone = 0
     @Published var translationTotal = 0
+    @Published var translationStatusText = ""
     @Published var translationError: String?
+
+    @Published var closedTabs: [(url: String, title: String)] = []
 
     @Published var isPickingRegion = false
     @Published var isDockCollapsed = false
@@ -237,7 +305,7 @@ final class BrowserStore: ObservableObject {
         self.openAiBaseUrl = UserDefaults.standard.string(forKey: "fluo.openAiBaseUrl") ?? "https://api.openai.com/v1"
         self.openAiModel = UserDefaults.standard.string(forKey: "fluo.openAiModel") ?? "gpt-4.1-mini"
 
-        let initialUrl = URL(string: loaded.searchEngine.homeURL) ?? URL(string: "https://www.google.com/")!
+        let initialUrl = URL(string: FluoUserDataSnapshot.startPageURL)!
         let first = BrowserTab(initialURL: initialUrl, workspaceId: loaded.activeWorkspaceId, isPrivate: false)
         self.tabs = [first]
         self.activeTabId = first.id
@@ -247,6 +315,10 @@ final class BrowserStore: ObservableObject {
     private func wireTabCallbacks(_ tab: BrowserTab) {
         tabCancellables[tab.id] = tab.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+        }
+        tab.onOpenNewTab = { [weak self, weak tab] url in
+            guard let self, let tab else { return }
+            self.newTab(urlString: url.absoluteString, isPrivate: tab.isPrivate)
         }
         tab.onVisitRecorded = { [weak self] url, title in
             self?.recordHistory(url: url, title: title)
@@ -324,8 +396,8 @@ final class BrowserStore: ObservableObject {
     // MARK: - Tabs & Workspaces
 
     func newTab(urlString: String? = nil, isPrivate: Bool = false) {
-        let targetStr = urlString ?? userData.searchEngine.homeURL
-        let url = URL(string: targetStr) ?? URL(string: "https://www.google.com/")!
+        let targetStr = urlString ?? FluoUserDataSnapshot.startPageURL
+        let url = URL(string: targetStr) ?? URL(string: FluoUserDataSnapshot.startPageURL)!
         let tab = BrowserTab(initialURL: url, workspaceId: userData.activeWorkspaceId, isPrivate: isPrivate)
         wireTabCallbacks(tab)
         tabs.append(tab)
@@ -333,12 +405,42 @@ final class BrowserStore: ObservableObject {
     }
 
     func closeTab(_ id: UUID) {
-        guard tabs.count > 1 else { return }
-        if tabs.first(where: { $0.id == id })?.isPinned == true { return }
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let removed = tabs[idx]
+        if removed.isPinned { return }
+        if !removed.isPrivate && !removed.isStartPage {
+            closedTabs.append((url: removed.urlString, title: removed.title))
+            if closedTabs.count > 20 { closedTabs.removeFirst() }
+        }
+        if tabs.count == 1 {
+            removed.openStartPage()
+            return
+        }
         tabCancellables.removeValue(forKey: id)
-        tabs.removeAll { $0.id == id }
+        tabs.remove(at: idx)
         if !tabs.contains(where: { $0.id == activeTabId }) {
             activeTabId = activeWorkspaceTabs.first?.id ?? tabs[0].id
+        }
+    }
+
+    func reopenClosedTab() {
+        guard let last = closedTabs.popLast() else { return }
+        newTab(urlString: last.url, isPrivate: false)
+    }
+
+    func closeAllTabsInCurrentWorkspace() {
+        let wsId = userData.activeWorkspaceId
+        for tab in tabs where tab.workspaceId == wsId && !tab.isPinned {
+            if !tab.isPrivate && !tab.isStartPage {
+                closedTabs.append((url: tab.urlString, title: tab.title))
+            }
+            tabCancellables.removeValue(forKey: tab.id)
+        }
+        tabs.removeAll { $0.workspaceId == wsId && !$0.isPinned }
+        if activeWorkspaceTabs.isEmpty {
+            newTab()
+        } else if !tabs.contains(where: { $0.id == activeTabId }) {
+            activeTabId = activeWorkspaceTabs[0].id
         }
     }
 
@@ -356,6 +458,15 @@ final class BrowserStore: ObservableObject {
         userData.workspaces.append(ws)
         userData.activeWorkspaceId = ws.id
         newTab()
+        userData.save()
+    }
+
+    func renameWorkspace(_ id: String, name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty,
+              let idx = userData.workspaces.firstIndex(where: { $0.id == id }) else { return }
+        userData.workspaces[idx].name = clean
+        objectWillChange.send()
         userData.save()
     }
 
@@ -420,21 +531,68 @@ final class BrowserStore: ObservableObject {
 
     // MARK: - Bookmarks, History, Glossary
 
+    func currentBookmark() -> BookmarkItem? {
+        let url = activeTab.urlString
+        return userData.bookmarks.first { $0.url == url }
+    }
+
+    func upsertBookmark(id: String?, title: String, url: String, folder: String) {
+        let cleanUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanUrl.isEmpty else { return }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalFolder = cleanFolder.isEmpty ? "Default" : cleanFolder
+        let finalTitle = cleanTitle.isEmpty ? cleanUrl : cleanTitle
+
+        if let id, let idx = userData.bookmarks.firstIndex(where: { $0.id == id }) {
+            userData.bookmarks[idx].title = finalTitle
+            userData.bookmarks[idx].url = cleanUrl
+            userData.bookmarks[idx].folder = finalFolder
+        } else if let idx = userData.bookmarks.firstIndex(where: { $0.url == cleanUrl }) {
+            userData.bookmarks[idx].title = finalTitle
+            userData.bookmarks[idx].folder = finalFolder
+        } else {
+            userData.bookmarks.insert(
+                BookmarkItem(
+                    id: UUID().uuidString,
+                    url: cleanUrl,
+                    title: finalTitle,
+                    folder: finalFolder,
+                    createdAt: Date()
+                ),
+                at: 0
+            )
+        }
+        userData.save()
+    }
+
+    func bookmarkAllTabs() {
+        var existing = Set(userData.bookmarks.map(\.url))
+        for tab in activeWorkspaceTabs where !tab.isStartPage && !tab.urlString.isEmpty {
+            if existing.contains(tab.urlString) { continue }
+            existing.insert(tab.urlString)
+            userData.bookmarks.insert(
+                BookmarkItem(
+                    id: UUID().uuidString,
+                    url: tab.urlString,
+                    title: tab.title.isEmpty ? tab.urlString : tab.title,
+                    folder: "Default",
+                    createdAt: Date()
+                ),
+                at: 0
+            )
+        }
+        userData.save()
+    }
+
     func toggleCurrentBookmark() {
         let url = activeTab.urlString
         if isCurrentPageBookmarked {
             userData.bookmarks.removeAll { $0.url == url }
+            userData.save()
         } else {
-            let item = BookmarkItem(
-                id: UUID().uuidString,
-                url: url,
-                title: activeTab.title.isEmpty ? url : activeTab.title,
-                folder: "Default",
-                createdAt: Date()
-            )
-            userData.bookmarks.insert(item, at: 0)
+            upsertBookmark(id: nil, title: activeTab.title, url: url, folder: "Default")
         }
-        userData.save()
     }
 
     func deleteBookmark(_ id: String) {
@@ -443,6 +601,7 @@ final class BrowserStore: ObservableObject {
     }
 
     func recordHistory(url: String, title: String) {
+        if url == FluoUserDataSnapshot.startPageURL { return }
         if userData.history.first?.url == url { return }
         let entry = HistoryEntry(id: UUID().uuidString, url: url, title: title, visitedAt: Date())
         userData.history.insert(entry, at: 0)
@@ -457,24 +616,70 @@ final class BrowserStore: ObservableObject {
         userData.save()
     }
 
-    func addGlossaryItem(source: String, target: String, caseSensitive: Bool) {
+    func addGlossaryItem(source: String, target: String, caseSensitive: Bool, folder: String = "Default") {
         let cleanSrc = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanSrc.isEmpty else { return }
-        userData.glossary.removeAll { $0.source.caseInsensitiveCompare(cleanSrc) == .orderedSame }
+        let cleanFolder = folder.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalFolder = cleanFolder.isEmpty ? "Default" : cleanFolder
+        if !userData.glossaryFolders.contains(finalFolder) {
+            userData.glossaryFolders.append(finalFolder)
+        }
+        userData.glossary.removeAll {
+            $0.folder == finalFolder && $0.source.caseInsensitiveCompare(cleanSrc) == .orderedSame
+        }
         userData.glossary.insert(
             GlossaryItem(
                 id: UUID().uuidString,
                 source: cleanSrc,
                 target: target.trimmingCharacters(in: .whitespacesAndNewlines),
-                caseSensitive: caseSensitive
+                caseSensitive: caseSensitive,
+                folder: finalFolder,
+                enabled: true
             ),
             at: 0
         )
         userData.save()
     }
 
+    func toggleGlossaryEnabled(_ id: String) {
+        if let idx = userData.glossary.firstIndex(where: { $0.id == id }) {
+            userData.glossary[idx].enabled.toggle()
+            userData.save()
+        }
+    }
+
     func deleteGlossaryItem(_ id: String) {
         userData.glossary.removeAll { $0.id == id }
+        userData.save()
+    }
+
+    func addGlossaryFolder(_ name: String) {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty, !userData.glossaryFolders.contains(clean) else { return }
+        userData.glossaryFolders.append(clean)
+        userData.save()
+    }
+
+    func renameGlossaryFolder(old: String, new: String) {
+        let cleanNew = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanNew.isEmpty, old != "Default", old != cleanNew else { return }
+        if let idx = userData.glossaryFolders.firstIndex(of: old) {
+            userData.glossaryFolders[idx] = cleanNew
+        } else if !userData.glossaryFolders.contains(cleanNew) {
+            userData.glossaryFolders.append(cleanNew)
+        }
+        for i in userData.glossary.indices where userData.glossary[i].folder == old {
+            userData.glossary[i].folder = cleanNew
+        }
+        userData.save()
+    }
+
+    func deleteGlossaryFolder(_ name: String) {
+        guard name != "Default" else { return }
+        userData.glossaryFolders.removeAll { $0 == name }
+        for i in userData.glossary.indices where userData.glossary[i].folder == name {
+            userData.glossary[i].folder = "Default"
+        }
         userData.save()
     }
 
@@ -515,7 +720,11 @@ final class BrowserStore: ObservableObject {
     }
 
     func runFindInPage(action: String) {
-        guard let js = loadResourceScript("find_in_page") else { return }
+        if activeTab.isStartPage || findQuery.isEmpty || action == "clear" {
+            findTotal = 0
+            findCurrent = 0
+        }
+        guard !activeTab.isStartPage, let js = loadResourceScript("find_in_page") else { return }
         let qJson = (try? JSONEncoder().encode(findQuery)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
         let aJson = (try? JSONEncoder().encode(action)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"find\""
         let call = "(\(js))(\(qJson), \(aJson));"
@@ -592,7 +801,7 @@ final class BrowserStore: ObservableObject {
                         baseUrl: self.openAiBaseUrl,
                         targetLanguage: self.targetLanguage,
                         style: self.userData.style.rawValue,
-                        glossary: self.userData.glossary
+                        glossary: self.userData.glossary.filter(\.enabled)
                     )
                     self.selectionTranslatedText = tr
                 } catch {
@@ -632,6 +841,7 @@ final class BrowserStore: ObservableObject {
         translationTask?.cancel()
         translationError = nil
         let tab = activeTab
+        if tab.isStartPage { return }
         guard let extractJs = loadResourceScript("content_extract"),
               let applyJs = loadResourceScript("inline_translate") else {
             translationError = "Bundled translation scripts not found."
@@ -643,28 +853,45 @@ final class BrowserStore: ObservableObject {
         let currentBase = openAiBaseUrl
         let currentTarget = targetLanguage
         let currentStyle = userData.style.rawValue
-        let currentGlossary = userData.glossary
+        let currentGlossary = userData.glossary.filter(\.enabled)
         let currentFontScale = userData.fontScale
         let currentLineHeight = userData.lineHeight
         let currentUi = uiLang.rawValue
 
         translationTask = Task { @MainActor in
             isTranslating = true
-            defer { isTranslating = false }
+            translationDone = 0
+            translationTotal = 0
+            translationStatusText = L10n.tr(uiLang, "tr.preparing")
+            defer {
+                isTranslating = false
+                translationStatusText = ""
+            }
 
             do {
                 let rawResult = try await tab.webView.evaluateJavaScript(extractJs)
                 guard let dict = rawResult as? [String: Any],
                       let blocks = dict["blocks"] as? [[String: Any]] else {
+                    if let d = rawResult as? [String: Any], let jsErr = d["error"] as? String {
+                        translationError = jsErr
+                    } else {
+                        translationError = L10n.tr(uiLang, "tr.noBlocks")
+                    }
                     return
                 }
-                let segments: [(id: String, text: String)] = blocks.compactMap { b in
-                    guard let k = b["key"] as? String, let t = b["text"] as? String, !t.isEmpty else { return nil }
+                let segments: [(key: String, text: String)] = blocks.compactMap { b in
+                    guard let k = (b["inlineKey"] as? String) ?? (b["key"] as? String),
+                          let t = b["text"] as? String, !t.isEmpty else { return nil }
                     return (k, t)
                 }
                 translationTotal = segments.count
                 translationDone = 0
-                guard !segments.isEmpty else { return }
+                guard !segments.isEmpty else {
+                    translationError = L10n.tr(uiLang, "tr.noBlocks")
+                    return
+                }
+
+                let uiJson = (try? JSONEncoder().encode(currentUi)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"ko\""
 
                 for seg in segments {
                     try Task.checkCancellation()
@@ -680,14 +907,19 @@ final class BrowserStore: ObservableObject {
                     translationDone += 1
 
                     let payload: [[String: Any]] = [[
-                        "id": seg.id,
+                        "key": seg.key,
                         "translation": tr,
                         "uncertain": false,
                         "notes": [String](),
                     ]]
                     let jsonData = try JSONSerialization.data(withJSONObject: payload)
                     let jsonStr = String(data: jsonData, encoding: .utf8) ?? "[]"
-                    let invokeJs = "(\(applyJs))(\(jsonStr), \(currentFontScale), \(currentLineHeight), \(bilingual ? "true" : "false"), \"\(currentUi)\");"
+                    let invokeJs = applyJs
+                        .replacingOccurrences(of: "__PAYLOAD__", with: jsonStr)
+                        .replacingOccurrences(of: "__FONT_SCALE__", with: String(format: "%.2f", currentFontScale))
+                        .replacingOccurrences(of: "__LINE_HEIGHT__", with: String(format: "%.2f", currentLineHeight))
+                        .replacingOccurrences(of: "__BILINGUAL__", with: bilingual ? "true" : "false")
+                        .replacingOccurrences(of: "__UI_LANG__", with: uiJson)
                     _ = try? await tab.webView.evaluateJavaScript(invokeJs)
                 }
                 tab.displayMode = bilingual ? .bilingual : .inline

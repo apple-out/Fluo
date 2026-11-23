@@ -85,15 +85,47 @@ struct GlossaryItem: Identifiable, Codable, Hashable {
     var source: String
     var target: String
     var caseSensitive: Bool
+    var folder: String = "Default"
+    var enabled: Bool = true
+
+    init(
+        id: String,
+        source: String,
+        target: String,
+        caseSensitive: Bool,
+        folder: String = "Default",
+        enabled: Bool = true
+    ) {
+        self.id = id
+        self.source = source
+        self.target = target
+        self.caseSensitive = caseSensitive
+        self.folder = folder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : folder
+        self.enabled = enabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        source = try c.decode(String.self, forKey: .source)
+        target = try c.decode(String.self, forKey: .target)
+        caseSensitive = try c.decodeIfPresent(Bool.self, forKey: .caseSensitive) ?? false
+        let rawFolder = try c.decodeIfPresent(String.self, forKey: .folder) ?? "Default"
+        folder = rawFolder.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Default" : rawFolder
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
 }
 
 struct FluoUserDataSnapshot: Codable {
+    static let startPageURL = "fluo://start"
+
     var workspaces: [WorkspaceItem] = [WorkspaceItem(id: "default", name: "General")]
     var activeWorkspaceId: String = "default"
     var bookmarks: [BookmarkItem] = []
     var history: [HistoryEntry] = []
     var translationHistory: [TranslationHistoryEntry] = []
     var glossary: [GlossaryItem] = []
+    var glossaryFolders: [String] = ["Default"]
     var searchEngine: SearchEngine = .google
     var appTheme: AppTheme = .system
     var style: TranslationStyle = .auto
@@ -101,6 +133,34 @@ struct FluoUserDataSnapshot: Codable {
     var lineHeight: Double = 1.6
     var adBlockEnabled: Bool = true
     var adBlockAllowlist: [String] = []
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let def = FluoUserDataSnapshot()
+        workspaces = try c.decodeIfPresent([WorkspaceItem].self, forKey: .workspaces) ?? def.workspaces
+        activeWorkspaceId = try c.decodeIfPresent(String.self, forKey: .activeWorkspaceId) ?? def.activeWorkspaceId
+        bookmarks = try c.decodeIfPresent([BookmarkItem].self, forKey: .bookmarks) ?? def.bookmarks
+        history = try c.decodeIfPresent([HistoryEntry].self, forKey: .history) ?? def.history
+        translationHistory = try c.decodeIfPresent([TranslationHistoryEntry].self, forKey: .translationHistory) ?? def.translationHistory
+        glossary = try c.decodeIfPresent([GlossaryItem].self, forKey: .glossary) ?? def.glossary
+        var folders = try c.decodeIfPresent([String].self, forKey: .glossaryFolders) ?? ["Default"]
+        if !folders.contains("Default") {
+            folders.insert("Default", at: 0)
+        }
+        for item in glossary where !folders.contains(item.folder) {
+            folders.append(item.folder)
+        }
+        glossaryFolders = folders
+        searchEngine = try c.decodeIfPresent(SearchEngine.self, forKey: .searchEngine) ?? def.searchEngine
+        appTheme = try c.decodeIfPresent(AppTheme.self, forKey: .appTheme) ?? def.appTheme
+        style = try c.decodeIfPresent(TranslationStyle.self, forKey: .style) ?? def.style
+        fontScale = try c.decodeIfPresent(Double.self, forKey: .fontScale) ?? def.fontScale
+        lineHeight = try c.decodeIfPresent(Double.self, forKey: .lineHeight) ?? def.lineHeight
+        adBlockEnabled = try c.decodeIfPresent(Bool.self, forKey: .adBlockEnabled) ?? def.adBlockEnabled
+        adBlockAllowlist = try c.decodeIfPresent([String].self, forKey: .adBlockAllowlist) ?? def.adBlockAllowlist
+    }
 
     private static var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

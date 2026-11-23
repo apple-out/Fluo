@@ -22,7 +22,7 @@ use crate::text;
 use crate::{AppState, lock};
 
 pub const DEFAULT_TOP: f64 = 108.0;
-pub const DEFAULT_URL: &str = "https://www.google.com/";
+pub const DEFAULT_URL: &str = "tb://start";
 pub const EXTRACT_SCRIPT: &str = include_str!("content_extract.js");
 const INLINE_TRANSLATE_SCRIPT: &str = include_str!("inline_translate.js");
 const INLINE_RESTORE_SCRIPT: &str = include_str!("inline_restore.js");
@@ -220,6 +220,12 @@ impl Tabs {
         tab.workspace_id = self.active_workspace.clone();
         self.items.push(tab.clone());
         tab
+    }
+
+    fn alloc_webview_label(&mut self) -> String {
+        let id = self.next_id;
+        self.next_id += 1;
+        format!("content-{id}")
     }
 
     pub fn snapshot(&self) -> BrowserState {
@@ -529,7 +535,7 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
         .additional_browser_args(&webview_args)
         .browser_extensions_enabled(extensions_enabled)
         .initialization_script(SELECTION_HELPER_SCRIPT)
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https"))
+        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about" | "blob" | "data"))
         .on_new_window(move |url, features| {
             if matches!(url.scheme(), "http" | "https") {
                 let is_popup_window = features.size().is_some() || features.position().is_some();
@@ -544,12 +550,13 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
                         .unwrap_or_default()
                 };
                 let target_host = url.host_str().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+                let same_host = !source_origin.is_empty() && source_origin == target_host;
                 let (policy, allowlist) = {
                     let state = app_for_popup.state::<AppState>();
                     let s = lock(&state.settings);
                     (s.popup_policy.clone(), s.popup_allowed_origins.clone())
                 };
-                let is_allowed = allowlist.iter().any(|entry| {
+                let is_allowed = same_host || allowlist.iter().any(|entry| {
                     let e = entry.trim().to_ascii_lowercase();
                     !e.is_empty()
                         && (source_origin == e
@@ -1326,6 +1333,10 @@ pub fn default_window_title(_ui_language: &str) -> &'static str {
 
 fn internal_page_title(kind: &str, ui_language: &str) -> Option<&'static str> {
     match (kind, ui_language) {
+        ("start", "en") => Some("Start Page"),
+        ("start", "ja") => Some("スタートページ"),
+        ("start", "zh-CN") => Some("起始页"),
+        ("start", _) => Some("시작 페이지"),
         ("bookmarks", "en") => Some("Bookmarks"),
         ("bookmarks", "ja") => Some("ブックマーク"),
         ("bookmarks", "zh-CN") => Some("书签"),
@@ -1511,6 +1522,10 @@ fn open_tab_with_privacy(
     url: &str,
     is_private: bool,
 ) -> Result<BrowserState, String> {
+    let ui_language = lock(&app.state::<AppState>().settings).ui_language.clone();
+    let internal_title = url
+        .strip_prefix("tb://")
+        .and_then(|kind| internal_page_title(kind, &ui_language));
     let tab = {
         let state = app.state::<AppState>();
         let mut tabs = lock(&state.tabs);
@@ -1519,6 +1534,14 @@ fn open_tab_with_privacy(
             tab.is_private = true;
             if let Some(stored) = tabs.items.last_mut() {
                 stored.is_private = true;
+            }
+        }
+        if let Some(title) = internal_title {
+            tab.loading = false;
+            tab.title = title.to_string();
+            if let Some(stored) = tabs.items.last_mut() {
+                stored.loading = false;
+                stored.title = title.to_string();
             }
         }
         tab
@@ -2210,25 +2233,45 @@ pub fn delete_workspace(app: &AppHandle, workspace_id: &str) -> Result<BrowserSt
 }
 
 pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
-    if let Some(kind) = input.trim().strip_prefix("tb://")
+    let trimmed = input.trim();
+    if let Some(kind) = trimmed.strip_prefix("tb://")
         && internal_page_title(kind, "ko").is_some()
+        && kind != "start"
     {
         return open_internal_tab(app, kind);
     }
+    let ui_language = lock(&app.state::<AppState>().settings).ui_language.clone();
     let search_engine = lock(&app.state::<AppState>().settings)
         .search_engine
         .clone();
-    let resolved = text::resolve_address(input, &search_engine)?;
-    let trimmed = input.trim();
-    let is_search_query = !trimmed.is_empty()
+    let is_start_target = trimmed == "tb://start" || trimmed == "fluo://start";
+    let resolved = if is_start_target {
+        "tb://start".to_string()
+    } else {
+        text::resolve_address(input, &search_engine)?
+    };
+    let is_search_query = !is_start_target
+        && !trimmed.is_empty()
         && !trimmed.contains("://")
         && (resolved.starts_with("https://www.google.com/search?q=")
             || resolved.starts_with("https://www.bing.com/search?q=")
             || resolved.starts_with("https://duckduckgo.com/?q="));
-    let (label, is_private) = {
+    let (old_label_to_close, updated_tab, top, is_private) = {
         let state = app.state::<AppState>();
         let mut tabs = lock(&state.tabs);
+        let top = tabs.top;
         let active_id = tabs.active.clone();
+        let needs_swap = tabs
+            .items
+            .iter()
+            .find(|t| Some(&t.id) == active_id.as_ref())
+            .map(|t| t.url.starts_with("tb://") != resolved.starts_with("tb://"))
+            .unwrap_or(false);
+        let next_label = if needs_swap {
+            Some(tabs.alloc_webview_label())
+        } else {
+            None
+        };
         let Some(tab) = tabs
             .items
             .iter_mut()
@@ -2237,6 +2280,10 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
             drop(tabs);
             return open_tab(app, &resolved);
         };
+        let old_label = tab.label.clone();
+        if let Some(new_lbl) = next_label {
+            tab.label = new_lbl;
+        }
         tab.history.truncate(tab.cursor + 1);
         if tab.history.last().map(|entry| entry.url.as_str()) != Some(resolved.as_str()) {
             tab.history.push(HistoryEntry::new(&resolved));
@@ -2245,8 +2292,20 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
         }
         tab.cursor = tab.history.len() - 1;
         tab.url = resolved.clone();
-        tab.loading = true;
-        (tab.label.clone(), tab.is_private)
+        if is_start_target {
+            tab.loading = false;
+            tab.title = internal_page_title("start", &ui_language)
+                .unwrap_or("Fluo")
+                .to_string();
+        } else {
+            tab.loading = true;
+        }
+        (
+            if old_label != tab.label { Some(old_label) } else { None },
+            tab.clone(),
+            top,
+            tab.is_private,
+        )
     };
     if is_search_query && !is_private {
         let state = app.state::<AppState>();
@@ -2254,7 +2313,15 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
         let _ = crate::db::record_search_history(&db, trimmed, &search_engine);
     }
 
-    if let Some(webview) = app.get_webview(&label) {
+    if let Some(old_label) = old_label_to_close {
+        create_webview(app, top, &updated_tab)?;
+        show_only_focus(app, &updated_tab.label, !is_start_target);
+        if let Some(old_wv) = app.get_webview(&old_label) {
+            let _ = old_wv.close();
+        }
+    } else if !is_start_target
+        && let Some(webview) = app.get_webview(&updated_tab.label)
+    {
         let _ = webview.eval("window.__tbPageFadeOut?.();");
         let url = url::Url::parse(&resolved).map_err(|error| error.to_string())?;
         webview
@@ -2275,23 +2342,36 @@ pub fn navigate(app: &AppHandle, input: &str) -> Result<BrowserState, String> {
 }
 
 fn go_to_history(app: &AppHandle, delta: isize) -> Result<BrowserState, String> {
-    let (label, target) = {
+    let ui_language = lock(&app.state::<AppState>().settings).ui_language.clone();
+    let (old_label_to_close, updated_tab, top, target) = {
         let state = app.state::<AppState>();
         let mut tabs = lock(&state.tabs);
+        let top = tabs.top;
         let active_id = tabs.active.clone();
-        let Some(tab) = tabs
+        let Some(pos) = tabs
             .items
-            .iter_mut()
-            .find(|tab| Some(&tab.id) == active_id.as_ref())
+            .iter()
+            .position(|tab| Some(&tab.id) == active_id.as_ref())
         else {
             return Err("활성 탭이 없습니다.".into());
         };
-        let next = tab.cursor as isize + delta;
-        if next < 0 || next as usize >= tab.history.len() {
+        let next = tabs.items[pos].cursor as isize + delta;
+        if next < 0 || next as usize >= tabs.items[pos].history.len() {
             return Ok(tabs.snapshot());
         }
-        // Keep the scroll position of the entry we are leaving so returning to
-        // it later restores where the reader stopped (Chrome/Edge behavior).
+        let prev_is_internal = tabs.items[pos].url.starts_with("tb://");
+        let target_url = tabs.items[pos].history[next as usize].url.clone();
+        let next_is_internal = target_url.starts_with("tb://");
+        let new_label = if prev_is_internal != next_is_internal {
+            Some(tabs.alloc_webview_label())
+        } else {
+            None
+        };
+        let tab = &mut tabs.items[pos];
+        let old_label = tab.label.clone();
+        if let Some(lbl) = new_label {
+            tab.label = lbl;
+        }
         if let Some(current) = tab.history.get_mut(tab.cursor) {
             current.scroll_x = tab.scroll_x;
             current.scroll_y = tab.scroll_y;
@@ -2299,13 +2379,33 @@ fn go_to_history(app: &AppHandle, delta: isize) -> Result<BrowserState, String> 
         tab.cursor = next as usize;
         let entry = tab.history[tab.cursor].clone();
         tab.url = entry.url.clone();
-        tab.loading = true;
+        if let Some(kind) = entry.url.strip_prefix("tb://") {
+            tab.loading = false;
+            tab.title = internal_page_title(kind, &ui_language)
+                .unwrap_or("Fluo")
+                .to_string();
+        } else {
+            tab.loading = true;
+        }
         tab.scroll_x = entry.scroll_x;
         tab.scroll_y = entry.scroll_y;
-        (tab.label.clone(), entry.url)
+        (
+            if old_label != tab.label { Some(old_label) } else { None },
+            tab.clone(),
+            top,
+            entry.url,
+        )
     };
 
-    if let Some(webview) = app.get_webview(&label) {
+    if let Some(old_label) = old_label_to_close {
+        create_webview(app, top, &updated_tab)?;
+        show_only_focus(app, &updated_tab.label, !target.starts_with("tb://"));
+        if let Some(old_wv) = app.get_webview(&old_label) {
+            let _ = old_wv.close();
+        }
+    } else if !target.starts_with("tb://")
+        && let Some(webview) = app.get_webview(&updated_tab.label)
+    {
         let url = url::Url::parse(&target).map_err(|error| error.to_string())?;
         webview
             .navigate(url)
@@ -2564,7 +2664,7 @@ pub fn open_overlay(
     tab_id: Option<String>,
 ) -> Result<(), String> {
     let kind = match kind {
-        "menu" | "adblock" | "translate" | "workspace" | "tab-menu" | "chrome-menu"
+        "menu" | "adblock" | "site-security" | "bookmark-edit" | "translate" | "workspace" | "tab-menu" | "chrome-menu"
         | "page-menu" | "tab-search" | "task-manager" | "bookmarks" | "glossary" | "history"
         | "visits" | "downloads" | "settings" | "feedback" | "rename-window"
         | "export-project" | "onboarding" => kind,

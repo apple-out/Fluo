@@ -73,6 +73,8 @@ export const api = {
     kind:
       | "menu"
       | "adblock"
+      | "site-security"
+      | "bookmark-edit"
       | "translate"
       | "workspace"
       | "tab-menu"
@@ -136,7 +138,7 @@ export const api = {
       targetLanguage: targetLanguage ?? null,
     }),
   openInternalTab: (
-    kind: "bookmarks" | "visits" | "downloads" | "glossary" | "history" | "settings",
+    kind: "start" | "bookmarks" | "visits" | "downloads" | "glossary" | "history" | "settings",
   ) => invoke<BrowserState>("open_internal_tab", { kind }),
   closeOverlay: () => invoke<void>("close_overlay"),
   setShellExpanded: (expanded: boolean) => invoke<void>("set_shell_expanded", { expanded }),

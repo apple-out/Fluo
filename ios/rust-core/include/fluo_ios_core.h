@@ -11,6 +11,9 @@ extern "C" {
 /// Returns 0 on success, non-zero on failure.
 int32_t fluo_load_model(const char *model_path, int32_t n_gpu_layers, uint32_t n_ctx);
 
+/// Returns last model load error string (must be freed with fluo_free_string()).
+char *fluo_last_error(void);
+
 /// Translates a single text segment into target_lang ("Korean", "English", "Japanese", "Chinese").
 /// Returns a newly allocated UTF-8 JSON string: {"ok":true,"translation":"..."} or {"ok":false,"error":"..."}.
 /// Caller MUST free the returned pointer with fluo_free_string().
