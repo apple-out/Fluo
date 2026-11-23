@@ -640,6 +640,28 @@
         target.focus();
         document.execCommand("insertText", false, text);
       }
+    } else if (action === "pip") {
+      if (document.pictureInPictureElement && typeof document.exitPictureInPicture === "function") {
+        document.exitPictureInPicture().catch(() => {});
+      } else {
+        const videos = [...document.querySelectorAll("video")];
+        const targetVideo =
+          videos.find((v) => !v.paused && !v.ended && v.readyState >= 2) ||
+          videos.sort((a, b) => b.clientWidth * b.clientHeight - a.clientWidth * a.clientHeight)[0];
+        if (targetVideo) {
+          if (typeof targetVideo.requestPictureInPicture === "function") {
+            targetVideo.requestPictureInPicture().catch(() => {});
+          } else if (typeof targetVideo.webkitSetPresentationMode === "function") {
+            targetVideo.webkitSetPresentationMode(
+              targetVideo.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture",
+            );
+          }
+        }
+      }
+    } else if (action === "scroll-top") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (action === "scroll-bottom") {
+      window.scrollTo({ top: document.documentElement.scrollHeight || 999999, behavior: "smooth" });
     }
   };
 
@@ -668,7 +690,14 @@
           : null;
       window.__tbContextTarget = editEl || target || null;
       const sel = window.getSelection();
-      const selectedText = sel ? sel.toString().trim().slice(0, 600) : "";
+      let selectedText = sel ? sel.toString().trim().slice(0, 600) : "";
+      if (!selectedText && editEl && (editEl.tagName === "INPUT" || editEl.tagName === "TEXTAREA")) {
+        const s = editEl.selectionStart ?? 0;
+        const e = editEl.selectionEnd ?? 0;
+        if (e > s && typeof editEl.value === "string") {
+          selectedText = editEl.value.slice(s, e).trim().slice(0, 600);
+        }
+      }
       const payload = {
         type: "page-contextmenu",
         x: Math.round(event.clientX),

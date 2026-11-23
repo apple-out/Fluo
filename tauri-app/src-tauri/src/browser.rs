@@ -940,10 +940,16 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                                 (0xbd | 0x6d, _) => Some("zoom-out"),
                                 (0x30 | 0x6e, _) => Some("zoom-reset"),
                                 (0x49, true) => Some("devtools"),
+                                (0x21, false) => Some("previous-tab"),
+                                (0x22, false) => Some("next-tab"),
+                                (0x2e, true) => Some("open-settings"),
+                                (0x74, _) => Some("reload"),
                                 _ => None,
                             }
                         } else if !control && !alt && shift && key == 0x1b {
                             Some("task-manager")
+                        } else if !control && !alt && key == 0x74 {
+                            Some("reload")
                         } else if !control && !alt && key == 0x7b {
                             Some("devtools")
                         } else if !control && !alt && key == 0x7a {
@@ -951,6 +957,7 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                             Some("fullscreen")
                         } else if alt && !control {
                             match key {
+                                0x24 => Some("home"),
                                 0x25 => Some("back"),
                                 0x27 => Some("forward"),
                                 _ => None,
@@ -1036,8 +1043,20 @@ fn install_browser_shortcuts(webview: &Webview, app: AppHandle) -> Result<(), St
                                     }
                                 }
                                 if let Some(shell) = app_for_msg.get_webview("shell") {
-                                    let _ = shell
-                                        .eval(format!("window.__ON_BROWSER_MESSAGE__?.({text});"));
+                                    let sender_tab_id = {
+                                        let state = app_for_msg.state::<AppState>();
+                                        let tabs = lock(&state.tabs);
+                                        tabs.items
+                                            .iter()
+                                            .find(|t| t.label == label_for_msg)
+                                            .map(|t| t.id.clone())
+                                            .unwrap_or_default()
+                                    };
+                                    let tab_id_json = serde_json::to_string(&sender_tab_id)
+                                        .unwrap_or_else(|_| "\"\"".into());
+                                    let _ = shell.eval(format!(
+                                        "window.__ON_BROWSER_MESSAGE__?.(Object.assign({text}, {{ tabId: {tab_id_json} }}));"
+                                    ));
                                 }
                             }
                             Ok(())

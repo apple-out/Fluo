@@ -416,11 +416,21 @@
   function applyBrowser(next: BrowserState) {
     const previousUrl = browser.tabs.find((item) => item.id === browser.activeTab)?.url;
     const nextTab = next.tabs.find((item) => item.id === next.activeTab);
+    const tabOrUrlChanged =
+      Boolean(browser.activeTab) &&
+      (next.activeTab !== browser.activeTab || (nextTab?.url && previousUrl !== nextTab.url));
+    if (tabOrUrlChanged) {
+      autoTranslatePrompt = null;
+      if (ttsActive) {
+        ttsActive = false;
+        ttsProgress = { index: 0, total: 0 };
+      }
+    }
     if (
       inlineMode &&
       browser.activeTab &&
       previousUrl &&
-      (next.activeTab !== browser.activeTab || (nextTab?.url && previousUrl !== nextTab.url))
+      tabOrUrlChanged
     ) {
       const previousTabId = browser.activeTab;
       const previousPageUrl = article?.url ?? previousUrl;
@@ -449,6 +459,7 @@
     errors = {};
     progress = { done: 0, total: 0 };
     inlineMode = false;
+    autoTranslatePrompt = null;
   }
 
   async function restoreInlinePage() {
@@ -552,6 +563,11 @@
     const closingActive = id === browser.activeTab;
     try {
       if (closingActive && translating) await api.cancelTranslation();
+      if (audibleTabs[id]) {
+        const nextAudible = { ...audibleTabs };
+        delete nextAudible[id];
+        audibleTabs = nextAudible;
+      }
       applyBrowser(await api.closeTab(id));
       if (closingActive) clearArticle();
       updateLayout();
@@ -597,6 +613,11 @@
 
   async function sleepTab(id: string) {
     try {
+      if (audibleTabs[id]) {
+        const nextAudible = { ...audibleTabs };
+        delete nextAudible[id];
+        audibleTabs = nextAudible;
+      }
       applyBrowser(await api.sleepTab(id));
       notify("info", t("toast.tabSlept"));
     } catch (cause) {
@@ -1768,6 +1789,33 @@
     }
   }
 
+  async function translateAndReplaceInInput(sourceText: string, outLang: string) {
+    const model = translationModel.trim();
+    if (!model) {
+      notify("error", t("toast.quickNeedModel"));
+      return;
+    }
+    try {
+      notify("info", trLocal(`${outLang}로 역번역 중…`, `Translating to ${outLang}…`, `${outLang}に翻訳中…`, `正在翻译为 ${outLang}…`));
+      const res = await api.translateBlocks(
+        [{ id: "outbound-input", text: sourceText }],
+        "natural",
+        true,
+        model,
+        activeTab?.url,
+        activeTab?.title,
+        outLang,
+      );
+      const translated = res[0]?.translation?.trim();
+      if (translated) {
+        await api.runPageContextAction("paste", translated);
+        notify("success", trLocal("번역된 문장으로 입력창에 바로 치환했습니다.", "Replaced selection with translation.", "翻訳文で入力欄を置換しました。", "已用译文替换输入框选中内容。"));
+      }
+    } catch (cause) {
+      notify("error", errorMessage(cause));
+    }
+  }
+
   async function closeOverlay() {
     if (overlayKind) {
       overlayKind = null;
@@ -2011,6 +2059,16 @@
       else if (findBarOpen) void closeFindBar();
       return;
     }
+    if (event.key === "F5") {
+      event.preventDefault();
+      void reload();
+      return;
+    }
+    if (event.key === "F12") {
+      event.preventDefault();
+      void api.runPageContextAction("inspect");
+      return;
+    }
     if (event.key === "F11") {
       event.preventDefault();
       void toggleFullscreen();
@@ -2019,9 +2077,26 @@
     if (event.altKey && !event.ctrlKey && !event.metaKey) {
       if (event.key === "ArrowLeft") { event.preventDefault(); void goBack(); }
       else if (event.key === "ArrowRight") { event.preventDefault(); void goForward(); }
+      else if (event.key === "Home") { event.preventDefault(); goHome(); }
       return;
     }
     if (!event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.key === "PageUp" || event.key === "PageDown") {
+      event.preventDefault();
+      const tabs = visibleTabs;
+      if (tabs.length > 1) {
+        const current = tabs.findIndex((tab) => tab.id === browser.activeTab);
+        const step = event.key === "PageDown" ? 1 : -1;
+        const target = tabs[(current + step + tabs.length) % tabs.length];
+        if (target) void selectTab(target.id);
+      }
+      return;
+    }
+    if (event.key === "Delete" && event.shiftKey) {
+      event.preventDefault();
+      void openInternalTab("settings");
+      return;
+    }
     const key = event.key.toLowerCase();
     if (key === "l") {
       event.preventDefault();
@@ -2343,6 +2418,7 @@
         paused?: boolean;
         index?: number;
         total?: number;
+        tabId?: string;
       }) => void;
     };
     overlayWindow.__ON_BROWSER_MESSAGE__ = (msg) => {
@@ -2370,8 +2446,9 @@
         return;
       }
       if (msg.type === "media-audio-state") {
-        if (browser.activeTab) {
-          audibleTabs = { ...audibleTabs, [browser.activeTab]: Boolean(msg.playing) };
+        const tid = msg.tabId || browser.activeTab;
+        if (tid) {
+          audibleTabs = { ...audibleTabs, [tid]: Boolean(msg.playing) };
         }
         return;
       }
@@ -2517,6 +2594,8 @@
         case "downloads": void openInternalTab("downloads"); break;
         case "open-history": void openInternalTab("visits"); break;
         case "open-bookmarks": void openInternalTab("bookmarks"); break;
+        case "open-settings": void openInternalTab("settings"); break;
+        case "home": goHome(); break;
         case "back": void goBack(); break;
         case "forward": void goForward(); break;
         case "toggle-bookmark-bar": toggleBookmarkBar(); break;
@@ -4223,6 +4302,23 @@
           {/if}
 
           {#if pageMenuContext?.isEditable}
+            {#if pageMenuContext?.selectedText}
+              {@const editSel = pageMenuContext.selectedText}
+              <button
+                onclick={() => {
+                  void closeOverlay().then(() => translateAndReplaceInInput(editSel, "English"));
+                }}
+              >
+                <span>⇄ {trLocal("영어로 역번역해 입력창 치환", "Translate to English & Replace", "英語に翻訳して置換", "翻译为英语并替换")}</span>
+              </button>
+              <button
+                onclick={() => {
+                  void closeOverlay().then(() => translateAndReplaceInInput(editSel, "日本語"));
+                }}
+              >
+                <span>⇄ {trLocal("일본어로 역번역해 입력창 치환", "Translate to Japanese & Replace", "日本語に翻訳して置換", "翻译为日语并替换")}</span>
+              </button>
+            {/if}
             <button
               onclick={() => {
                 void closeOverlay().then(() => pasteFromClipboardToPage());
@@ -4279,6 +4375,13 @@
             }}
           >
             <span>🔊 {trLocal("소리 내어 읽기 (TTS)", "Read Aloud (TTS)", "音声読み上げ (TTS)", "语音朗读 (TTS)")}</span>
+          </button>
+          <button
+            onclick={() => {
+              void closeOverlay().then(() => api.runPageContextAction("pip"));
+            }}
+          >
+            <span>📺 {trLocal("동영상 PIP (화면 속 화면)", "Picture-in-Picture (PiP)", "ピクチャ・イン・ピクチャ (PiP)", "画中画模式 (PiP)")}</span>
           </button>
           <button
             onclick={() => {

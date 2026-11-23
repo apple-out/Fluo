@@ -60,6 +60,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
     @Published var detectedLanguage: String = "unknown"
 
     var lastActiveAt: Date = Date()
+    var cameFromStartPage: Bool = false
 
     var isStartPage: Bool {
         urlString == FluoUserDataSnapshot.startPageURL
@@ -189,6 +190,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         self.isPrivate = isPrivate
         self.urlString = initialURL.absoluteString
         self.title = initialURL.absoluteString == FluoUserDataSnapshot.startPageURL ? "Fluo" : (initialURL.host ?? "Fluo")
+        self.cameFromStartPage = (initialURL.absoluteString == FluoUserDataSnapshot.startPageURL)
         self.isSleeping = deferLoad && initialURL.absoluteString != FluoUserDataSnapshot.startPageURL
         super.init()
 
@@ -215,7 +217,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                 guard let self else { return }
                 self.isLoading = wv.isLoading
                 if !self.isStartPage && !self.isSleeping {
-                    self.canGoBack = wv.canGoBack
+                    self.canGoBack = wv.canGoBack || self.cameFromStartPage
                     self.canGoForward = wv.canGoForward
                 }
                 if !wv.isLoading, self.refreshControl.isRefreshing {
@@ -235,7 +237,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
                 if let u = wv.url?.absoluteString, !u.isEmpty, u != "about:blank" {
                     self.urlString = u
                 }
-                self.canGoBack = wv.canGoBack
+                self.canGoBack = wv.canGoBack || self.cameFromStartPage
                 self.canGoForward = wv.canGoForward
             }
         }
@@ -260,6 +262,14 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         displayMode = .original
         webView.stopLoading()
         webView.loadHTMLString("", baseURL: nil)
+    }
+
+    func tearDown() {
+        webView.stopLoading()
+        _ = webView.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(e=>{try{e.pause();e.src='';}catch(_){}});", completionHandler: nil)
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "fluoAction")
+        webView.navigationDelegate = nil
+        webView.uiDelegate = nil
     }
 
     static func resolveInputToURL(_ rawInput: String, searchEngine: SearchEngine) -> URL? {
@@ -323,18 +333,28 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         webView.stopLoading()
         isSleeping = false
         pageErrorText = nil
+        cameFromStartPage = true
         displayMode = .original
         urlString = FluoUserDataSnapshot.startPageURL
         title = "Fluo"
         progress = 0
         isLoading = false
         canGoBack = false
-        canGoForward = webView.url != nil
+        canGoForward = webView.url != nil && webView.url?.absoluteString != "about:blank"
+    }
+
+    func goBackFromCurrent() {
+        pageErrorText = nil
+        if webView.canGoBack {
+            webView.goBack()
+        } else if cameFromStartPage && !isStartPage {
+            openStartPage()
+        }
     }
 
     func goForwardFromCurrent() {
         pageErrorText = nil
-        if isStartPage, let wvUrl = webView.url {
+        if isStartPage, let wvUrl = webView.url, wvUrl.absoluteString != "about:blank" {
             urlString = wvUrl.absoluteString
             title = webView.title ?? (wvUrl.host ?? "Fluo")
             canGoBack = true
@@ -707,7 +727,7 @@ final class BrowserStore: ObservableObject {
             retranslateSingleParagraph(key: key, source: source, on: tab)
         case "edit":
             guard let translation = payload["translation"] as? String else { return }
-            if let source = payload["source"] as? String, !source.isEmpty {
+            if !tab.isPrivate, let source = payload["source"] as? String, !source.isEmpty {
                 TranslationEngine.shared.storeCachedTranslation(
                     translation,
                     for: source,
@@ -1073,6 +1093,7 @@ final class BrowserStore: ObservableObject {
             return
         }
         tabCancellables.removeValue(forKey: id)
+        removed.tearDown()
         tabs.remove(at: idx)
         if !tabs.contains(where: { $0.id == activeTabId }) {
             let next = activeWorkspaceTabs.first ?? tabs[0]
@@ -1094,6 +1115,7 @@ final class BrowserStore: ObservableObject {
                 closedTabs.append((url: tab.urlString, title: tab.title))
             }
             tabCancellables.removeValue(forKey: tab.id)
+            tab.tearDown()
         }
         tabs.removeAll { $0.workspaceId == wsId && !$0.isPinned }
         if activeWorkspaceTabs.isEmpty {
@@ -1304,6 +1326,21 @@ final class BrowserStore: ObservableObject {
 
     func clearHistory() {
         userData.history.removeAll()
+        userData.save()
+    }
+
+    func deleteHistoryItem(_ id: String) {
+        userData.history.removeAll { $0.id == id }
+        userData.save()
+    }
+
+    func deleteTranslationHistoryItem(_ id: String) {
+        userData.translationHistory.removeAll { $0.id == id }
+        userData.save()
+    }
+
+    func clearTranslationHistory() {
+        userData.translationHistory.removeAll()
         userData.save()
     }
 
@@ -1554,6 +1591,27 @@ final class BrowserStore: ObservableObject {
         """
         let body = (try? await tab.webView.evaluateJavaScript(js) as? String) ?? ""
         return "# \(tab.title)\n\nSource: \(tab.urlString)\n\n---\n\n\(body)"
+    }
+
+    func togglePictureInPicture() {
+        let js = """
+        (() => {
+          if (document.pictureInPictureElement && typeof document.exitPictureInPicture === "function") {
+            document.exitPictureInPicture().catch(() => {});
+            return;
+          }
+          const videos = [...document.querySelectorAll("video")];
+          const v = videos.find(el => !el.paused && !el.ended && el.readyState >= 2)
+            || videos.sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0];
+          if (!v) return;
+          if (typeof v.webkitSetPresentationMode === "function") {
+            v.webkitSetPresentationMode(v.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture");
+          } else if (typeof v.requestPictureInPicture === "function") {
+            v.requestPictureInPicture().catch(() => {});
+          }
+        })()
+        """
+        _ = activeTab.webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     // MARK: - Edge-Style Read Aloud (TTS)
@@ -1859,7 +1917,9 @@ final class BrowserStore: ObservableObject {
                     style: currentStyle,
                     glossary: currentGlossary
                 )
-                TranslationEngine.shared.storeCachedTranslation(tr, for: source, targetLanguage: currentTarget, style: currentStyle)
+                if !tab.isPrivate {
+                    TranslationEngine.shared.storeCachedTranslation(tr, for: source, targetLanguage: currentTarget, style: currentStyle)
+                }
                 await applyTranslatedSegments(
                     [(key: key, translation: tr)],
                     on: tab,
@@ -1997,12 +2057,14 @@ final class BrowserStore: ObservableObject {
                         var pairs: [(key: String, translation: String)] = []
                         for (offset, tr) in translatedList.enumerated() where offset < slice.count {
                             let item = slice[offset]
-                            TranslationEngine.shared.storeCachedTranslation(
-                                tr,
-                                for: item.text,
-                                targetLanguage: currentTarget,
-                                style: currentStyle
-                            )
+                            if !tab.isPrivate {
+                                TranslationEngine.shared.storeCachedTranslation(
+                                    tr,
+                                    for: item.text,
+                                    targetLanguage: currentTarget,
+                                    style: currentStyle
+                                )
+                            }
                             pairs.append((key: item.key, translation: tr))
                         }
                         await applyTranslatedSegments(
@@ -2029,12 +2091,14 @@ final class BrowserStore: ObservableObject {
                             style: currentStyle,
                             glossary: currentGlossary
                         )
-                        TranslationEngine.shared.storeCachedTranslation(
-                            tr,
-                            for: seg.text,
-                            targetLanguage: currentTarget,
-                            style: currentStyle
-                        )
+                        if !tab.isPrivate {
+                            TranslationEngine.shared.storeCachedTranslation(
+                                tr,
+                                for: seg.text,
+                                targetLanguage: currentTarget,
+                                style: currentStyle
+                            )
+                        }
                         translationDone += 1
                         await applyTranslatedSegments(
                             [(key: seg.key, translation: tr)],

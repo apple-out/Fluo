@@ -225,6 +225,9 @@ enum L10n {
             "dl.empty": "다운로드한 파일이 없습니다.",
             "err.retry": "다시 시도",
             "omni.switchTab": "탭 전환",
+            "menu.pip": "동영상 PIP (화면 속 화면)",
+            "hist.search": "방문 기록 검색",
+            "trhist.search": "번역 기록 검색",
         ],
         .en: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -401,6 +404,9 @@ enum L10n {
             "dl.empty": "No downloaded files yet.",
             "err.retry": "Retry",
             "omni.switchTab": "Switch Tab",
+            "menu.pip": "Picture-in-Picture (PiP)",
+            "hist.search": "Search history",
+            "trhist.search": "Search translation history",
         ],
         .ja: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -577,6 +583,9 @@ enum L10n {
             "dl.empty": "ダウンロードしたファイルはありません。",
             "err.retry": "再試行",
             "omni.switchTab": "タブ切替",
+            "menu.pip": "ピクチャ・イン・ピクチャ (PiP)",
+            "hist.search": "閲覧履歴を検索",
+            "trhist.search": "翻訳履歴を検索",
         ],
         .zhCN: [
             "app.tagline": "Browse in flow. Translate on-device.",
@@ -753,6 +762,9 @@ enum L10n {
             "dl.empty": "暂无下载文件。",
             "err.retry": "重试",
             "omni.switchTab": "切换标签页",
+            "menu.pip": "视频画中画模式 (PiP)",
+            "hist.search": "搜索浏览历史",
+            "trhist.search": "搜索翻译历史",
         ],
     ]
 }

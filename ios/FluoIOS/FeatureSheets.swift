@@ -724,6 +724,12 @@ struct MenuSheet: View {
                                 }
                                 Divider().opacity(0.25)
 
+                                menuRow(t("menu.pip"), icon: "pip") {
+                                    dismiss()
+                                    store.togglePictureInPicture()
+                                }
+                                Divider().opacity(0.25)
+
                                 menuRow(t("menu.exportMd"), icon: "doc.richtext") {
                                     Task {
                                         let md = await store.exportCurrentPageMarkdown()
@@ -1109,17 +1115,26 @@ struct SiteSecuritySheet: View {
 struct HistorySheet: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var filtered: [HistoryEntry] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return store.userData.history }
+        return store.userData.history.filter {
+            $0.title.localizedCaseInsensitiveContains(q) || $0.url.localizedCaseInsensitiveContains(q)
+        }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                if store.userData.history.isEmpty {
+                if filtered.isEmpty {
                     Text(t("hist.empty")).foregroundStyle(.secondary)
                         .listRowBackground(Color.white.opacity(0.06))
                 } else {
-                    ForEach(store.userData.history) { entry in
+                    ForEach(filtered) { entry in
                         Button {
                             store.activeTab.navigate(input: entry.url, searchEngine: store.userData.searchEngine)
                             dismiss()
@@ -1130,11 +1145,19 @@ struct HistorySheet: View {
                             }
                         }
                         .listRowBackground(Color.white.opacity(0.08))
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                store.deleteHistoryItem(entry.id)
+                            } label: {
+                                Text(t("set.delete"))
+                            }
+                        }
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .background { LiquidAuroraBackground() }
+            .searchable(text: $search, prompt: t("hist.search"))
             .navigationTitle(t("hist.title"))
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -1153,17 +1176,29 @@ struct HistorySheet: View {
 struct TranslationHistorySheet: View {
     @ObservedObject var store: BrowserStore
     @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private var filtered: [TranslationHistoryEntry] {
+        let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        if q.isEmpty { return store.userData.translationHistory }
+        return store.userData.translationHistory.filter {
+            $0.title.localizedCaseInsensitiveContains(q)
+                || $0.url.localizedCaseInsensitiveContains(q)
+                || $0.targetLanguage.localizedCaseInsensitiveContains(q)
+                || $0.provider.localizedCaseInsensitiveContains(q)
+        }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                if store.userData.translationHistory.isEmpty {
+                if filtered.isEmpty {
                     Text(t("trhist.empty")).foregroundStyle(.secondary)
                         .listRowBackground(Color.white.opacity(0.06))
                 } else {
-                    ForEach(store.userData.translationHistory) { item in
+                    ForEach(filtered) { item in
                         Button {
                             store.activeTab.navigate(input: item.url, searchEngine: store.userData.searchEngine)
                             dismiss()
@@ -1176,13 +1211,26 @@ struct TranslationHistorySheet: View {
                             }
                         }
                         .listRowBackground(Color.white.opacity(0.08))
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                store.deleteTranslationHistoryItem(item.id)
+                            } label: {
+                                Text(t("set.delete"))
+                            }
+                        }
                     }
                 }
             }
             .scrollContentBackground(.hidden)
             .background { LiquidAuroraBackground() }
+            .searchable(text: $search, prompt: t("trhist.search"))
             .navigationTitle(t("trhist.title"))
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !store.userData.translationHistory.isEmpty {
+                        Button(t("hist.clear"), role: .destructive) { store.clearTranslationHistory() }
+                    }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(t("common.done")) { dismiss() }
                 }

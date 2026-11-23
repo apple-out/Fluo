@@ -133,7 +133,10 @@ export const api = {
       | "tts-stop"
       | "tts-next"
       | "tts-prev"
-      | "tts-rate",
+      | "tts-rate"
+      | "pip"
+      | "scroll-top"
+      | "scroll-bottom",
     text?: string,
     x?: number,
     y?: number,

@@ -789,7 +789,7 @@ struct ContentView: View {
             LiquidGlassGroup(spacing: 10) {
                 HStack(spacing: 0) {
                     Button {
-                        store.activeTab.webView.goBack()
+                        store.activeTab.goBackFromCurrent()
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 16, weight: .semibold))
