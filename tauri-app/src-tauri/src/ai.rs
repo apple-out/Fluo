@@ -2387,13 +2387,13 @@ pub fn glossary_context(entries: &[GlossaryEntry], text: &str) -> (Vec<GlossaryR
                 GlossaryRule {
                     source: entry.source.trim().to_string(),
                     aliases,
-                    translation: if entry.do_not_translate {
+                    translation: if entry.do_not_translate || entry.translation.trim().is_empty() {
                         entry.source.trim().to_string()
                     } else {
                         entry.translation.trim().to_string()
                     },
                     alternatives: entry.alternatives.trim().to_string(),
-                    do_not_translate: entry.do_not_translate,
+                    do_not_translate: entry.do_not_translate || entry.translation.trim().is_empty(),
                     reading: entry.reading.trim().to_string(),
                 },
             ))

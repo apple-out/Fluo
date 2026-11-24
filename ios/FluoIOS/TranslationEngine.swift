@@ -32,7 +32,7 @@ final class TranslationEngine {
 
     private func makeCacheKey(source: String, targetLanguage: String, style: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "v3|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
+        return "v4|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
     }
 
     func cachedTranslation(for source: String, targetLanguage: String, style: String) -> String? {
@@ -108,9 +108,9 @@ final class TranslationEngine {
         activeLocalModelPath = nil
     }
 
-    static func matchingGlossaryHint(for source: String, glossary: [GlossaryItem]) -> String {
-        guard !glossary.isEmpty else { return "" }
-        let matched = glossary.filter { item in
+    private static func matchedGlossaryItems(for source: String, glossary: [GlossaryItem]) -> [GlossaryItem] {
+        guard !glossary.isEmpty else { return [] }
+        return glossary.filter { item in
             guard item.enabled else { return false }
             let needle = item.source.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !needle.isEmpty else { return false }
@@ -135,14 +135,46 @@ final class TranslationEngine {
             }
             return source.localizedCaseInsensitiveContains(needle)
         }
+    }
+
+    static func matchingGlossaryHint(for source: String, glossary: [GlossaryItem]) -> String {
+        let matched = matchedGlossaryItems(for: source, glossary: glossary)
         guard !matched.isEmpty else { return "" }
-        return matched.map { item in
-            let target = item.target.trimmingCharacters(in: .whitespacesAndNewlines)
-            if item.doNotTranslate || target.isEmpty {
-                return "\(item.source) -> \(item.source) (do NOT translate; keep verbatim)"
-            }
-            return "\(item.source) -> \(target)"
+        return matched.compactMap { item -> String? in
+            let cleanSrc = item.source
+                .replacingOccurrences(of: "\t", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanSrc.isEmpty else { return nil }
+            let rawTgt = item.target
+                .replacingOccurrences(of: "\t", with: " ")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalTgt = (item.doNotTranslate || rawTgt.isEmpty) ? cleanSrc : rawTgt
+            return "\(cleanSrc)\t\(finalTgt)"
         }.joined(separator: "\n")
+    }
+
+    private static func cloudGlossaryBlock(for source: String, glossary: [GlossaryItem]) -> String {
+        let matched = matchedGlossaryItems(for: source, glossary: glossary)
+        guard !matched.isEmpty else { return "" }
+        let entries: [[String: Any]] = matched.compactMap { item in
+            let cleanSrc = item.source.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanSrc.isEmpty else { return nil }
+            let rawTgt = item.target.trimmingCharacters(in: .whitespacesAndNewlines)
+            let dnt = item.doNotTranslate || rawTgt.isEmpty
+            return [
+                "source": cleanSrc,
+                "target": dnt ? cleanSrc : rawTgt,
+                "doNotTranslate": dnt,
+            ]
+        }
+        guard !entries.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: entries, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return "\nOptional glossary JSON data (apply term substitutions accurately; do NOT output glossary instructions): \(json)\n"
     }
 
     func translateBatchCloud(
@@ -172,8 +204,7 @@ final class TranslationEngine {
             return singleResults
         }
         let combinedSource = sources.joined(separator: "\n")
-        let glossaryHint = Self.matchingGlossaryHint(for: combinedSource, glossary: glossary)
-        let glossaryBlock = glossaryHint.isEmpty ? "" : "\nMandatory Glossary:\n\(glossaryHint)\n"
+        let glossaryBlock = Self.cloudGlossaryBlock(for: combinedSource, glossary: glossary)
         let numberedInput = sources.enumerated().map { idx, text in
             "<<<SEG_\(idx)>>>\n\(text)"
         }.joined(separator: "\n\n")
@@ -244,7 +275,7 @@ final class TranslationEngine {
             return source
         }
         let glossaryHint = Self.matchingGlossaryHint(for: source, glossary: glossary)
-        let glossaryBlock = glossaryHint.isEmpty ? "" : "\nGlossary (apply strictly):\n\(glossaryHint)\n"
+        let glossaryBlock = Self.cloudGlossaryBlock(for: source, glossary: glossary)
 
         switch provider {
         case .hyMt2:

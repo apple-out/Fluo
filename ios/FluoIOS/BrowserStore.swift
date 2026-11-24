@@ -1502,6 +1502,7 @@ final class BrowserStore: ObservableObject {
             )
         }
         userData.save()
+        TranslationEngine.shared.clearTranslationCache()
     }
 
     func addGlossaryItem(source: String, target: String, caseSensitive: Bool, folder: String = "Default") {
@@ -1566,12 +1567,14 @@ final class BrowserStore: ObservableObject {
         if let idx = userData.glossary.firstIndex(where: { $0.id == id }) {
             userData.glossary[idx].enabled.toggle()
             userData.save()
+            TranslationEngine.shared.clearTranslationCache()
         }
     }
 
     func deleteGlossaryItem(_ id: String) {
         userData.glossary.removeAll { $0.id == id }
         userData.save()
+        TranslationEngine.shared.clearTranslationCache()
     }
 
     func addGlossaryFolder(_ name: String) {
@@ -1602,6 +1605,7 @@ final class BrowserStore: ObservableObject {
             userData.glossary[i].folder = "Default"
         }
         userData.save()
+        TranslationEngine.shared.clearTranslationCache()
     }
 
     // MARK: - AdBlock & Clear Data

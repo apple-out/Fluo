@@ -79,6 +79,9 @@
 
   async function removeEntry(entry: GlossaryEntry) {
     confirmDeleteId = null;
+    if (editing?.id === entry.id) {
+      editing = null;
+    }
     try {
       await api.deleteGlossary(entry.id);
       await load();
@@ -316,7 +319,11 @@
             </label>
             <label class="field">
               <span>{t("gloss.translation")}</span>
-              <input bind:value={editing.translation} placeholder="마법" />
+              <input
+                bind:value={editing.translation}
+                disabled={editing.doNotTranslate}
+                placeholder={editing.doNotTranslate ? t("gloss.dntBadge") : ""}
+              />
             </label>
             <label class="field">
               <span>{t("gloss.alternatives")}</span>
@@ -365,7 +372,7 @@
                   <span class="source">{entry.source}</span>
                   {#if entry.reading}<span class="reading">{entry.reading}</span>{/if}
                   <span class="arrow">→</span>
-                  <span class="target">{entry.doNotTranslate ? t("gloss.dntBadge") : entry.translation || t("gloss.noTrBadge")}</span>
+                  <span class="target">{entry.doNotTranslate || !entry.translation.trim() ? t("gloss.dntBadge") : entry.translation}</span>
                 </div>
                 <div class="entry-flags">
                   {#if entry.alternatives}<span class="flag">{t("gloss.altPrefix")}{entry.alternatives}</span>{/if}
@@ -536,6 +543,11 @@
   input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   input[type="search"] {

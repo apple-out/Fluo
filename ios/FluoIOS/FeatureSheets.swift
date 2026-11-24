@@ -2079,6 +2079,8 @@ struct GlossarySheet: View {
                     Section {
                         TextField(t("gl.source"), text: $src)
                         TextField(t("gl.target"), text: $dst)
+                            .disabled(doNotTranslate)
+                            .opacity(doNotTranslate ? 0.5 : 1.0)
                         Picker(t("gl.folder"), selection: $targetFolder) {
                             ForEach(store.userData.glossaryFolders, id: \.self) { folder in
                                 Text(folder).tag(folder)
@@ -2157,13 +2159,13 @@ struct GlossarySheet: View {
                                                     .padding(.vertical, 2)
                                                     .background(FluoThemeTokens.indigo.opacity(0.18), in: Capsule())
                                                 if item.exactMatch {
-                                                    Text("Exact").font(.caption2).foregroundStyle(.secondary)
+                                                    Text(t("gl.exact")).font(.caption2).foregroundStyle(.secondary)
                                                 }
                                                 if item.useRegex {
-                                                    Text("Regex").font(.caption2).foregroundStyle(.secondary)
+                                                    Text(t("gl.regex")).font(.caption2).foregroundStyle(.secondary)
                                                 }
                                             }
-                                            Text(item.doNotTranslate || item.target.isEmpty ? "(keep original)" : item.target)
+                                            Text(item.doNotTranslate || item.target.isEmpty ? t("gl.dnt") : item.target)
                                                 .font(.caption).foregroundStyle(.secondary)
                                             if !item.note.isEmpty {
                                                 Text(item.note).font(.caption2).foregroundStyle(.secondary)
@@ -2181,6 +2183,15 @@ struct GlossarySheet: View {
                                     .tint(FluoThemeTokens.indigo)
 
                                     Button(role: .destructive) {
+                                        if editingId == item.id {
+                                            editingId = nil
+                                            src = ""
+                                            dst = ""
+                                            exactMatch = false
+                                            useRegex = false
+                                            doNotTranslate = false
+                                            noteDraft = ""
+                                        }
                                         store.deleteGlossaryItem(item.id)
                                     } label: {
                                         Image(systemName: "trash")

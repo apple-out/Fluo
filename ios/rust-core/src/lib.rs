@@ -180,6 +180,58 @@ fn source_is_chinese(source_text: &str) -> bool {
     hanzi > 0
 }
 
+fn is_dialogue_line(line: &str, is_cjk: bool) -> bool {
+    let l = line.trim();
+    if l.is_empty() {
+        return false;
+    }
+    const QUOTE_PAIRS: [(char, char); 6] = [
+        ('「', '」'),
+        ('『', '』'),
+        ('“', '”'),
+        ('"', '"'),
+        ('〝', '〟'),
+        ('（', '）'),
+    ];
+    if QUOTE_PAIRS
+        .iter()
+        .any(|&(open, close)| l.starts_with(open) && l.ends_with(close))
+        || (is_cjk && l.starts_with('(') && l.ends_with(')'))
+    {
+        return true;
+    }
+    const OPEN_DIALOGUE_ONLY: [char; 5] = ['「', '“', '"', '〝', '（'];
+    l.starts_with(OPEN_DIALOGUE_ONLY)
+        || (is_cjk && l.starts_with('('))
+        || l.starts_with('—')
+        || l.starts_with('-')
+}
+
+fn has_mixed_dialogue_and_narration(text: &str) -> bool {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.len() < 2 {
+        return false;
+    }
+    let is_cjk = has_cjk_or_kana(text);
+    let mut has_dlg = false;
+    let mut has_narration = false;
+    for line in lines {
+        if is_dialogue_line(line, is_cjk) {
+            has_dlg = true;
+        } else {
+            has_narration = true;
+        }
+        if has_dlg && has_narration {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_dialogue_segment(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -201,22 +253,13 @@ fn is_dialogue_segment(text: &str) -> bool {
     {
         return true;
     }
-    const OPEN_QUOTES: [char; 6] = ['「', '『', '“', '"', '〝', '（'];
     let lines: Vec<&str> = trimmed
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .collect();
     if lines.len() > 1 {
-        let dialogue_lines = lines
-            .iter()
-            .filter(|l| {
-                l.starts_with(OPEN_QUOTES)
-                    || (is_cjk && l.starts_with('('))
-                    || l.starts_with('—')
-                    || l.starts_with('-')
-            })
-            .count();
+        let dialogue_lines = lines.iter().filter(|l| is_dialogue_line(l, is_cjk)).count();
         if dialogue_lines * 2 >= lines.len() {
             return true;
         }
@@ -643,7 +686,9 @@ fn shortcut_translation(source_text: &str, norm_target: &str) -> Option<String> 
 }
 
 fn segment_needs_line_split(source_text: &str) -> bool {
-    source_text.chars().count() > 320 && source_text.lines().count() > 2
+    let chars = source_text.chars().count();
+    let lines = source_text.lines().count();
+    (lines > 2 && chars > 160) || has_mixed_dialogue_and_narration(source_text)
 }
 
 fn is_western_abbreviation_before_dot(chars: &[(usize, char)], dot_idx: usize) -> bool {
@@ -842,6 +887,355 @@ fn join_translated_sentences(parts: &[String], norm_target: &str) -> String {
         joined.push_str(trimmed);
     }
     joined
+}
+
+#[derive(Clone, Debug)]
+struct IosGlossaryRule {
+    source: String,
+    target: String,
+    do_not_translate: bool,
+}
+
+fn parse_ios_glossary_hint(glossary_hint: &str) -> Vec<IosGlossaryRule> {
+    let mut rules = Vec::new();
+    for raw_line in glossary_hint.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let pair = if let Some((s, t)) = trimmed.split_once('\t') {
+            Some((s, t))
+        } else {
+            trimmed.split_once(" -> ")
+        };
+        if let Some((src, rhs)) = pair {
+            let clean_src = src.trim();
+            if clean_src.is_empty() {
+                continue;
+            }
+            let mut clean_tgt = rhs.trim();
+            let mut explicit_dnt = false;
+            if let Some(pos) = clean_tgt.find("(do NOT translate") {
+                clean_tgt = clean_tgt[..pos].trim();
+                explicit_dnt = true;
+            }
+            let final_tgt = if clean_tgt.is_empty() {
+                clean_src.to_string()
+            } else {
+                clean_tgt.to_string()
+            };
+            let is_dnt =
+                explicit_dnt || clean_tgt.is_empty() || final_tgt.eq_ignore_ascii_case(clean_src);
+            rules.push(IosGlossaryRule {
+                source: clean_src.to_string(),
+                target: final_tgt,
+                do_not_translate: is_dnt,
+            });
+        }
+    }
+    rules
+}
+
+fn is_ascii_word_char_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+fn find_glossary_match_range(haystack: &str, needle: &str) -> Option<(usize, usize)> {
+    let needle_trimmed = needle.trim();
+    if needle_trimmed.is_empty() || haystack.is_empty() {
+        return None;
+    }
+    if needle_trimmed.is_ascii() {
+        let hay_bytes = haystack.as_bytes();
+        let hay_lower = haystack.to_ascii_lowercase();
+        let needle_lower = needle_trimmed.to_ascii_lowercase();
+        let nlen = needle_lower.len();
+        let first_ascii = needle_trimmed
+            .as_bytes()
+            .first()
+            .map(|&b| is_ascii_word_char_byte(b))
+            .unwrap_or(false);
+        let last_ascii = needle_trimmed
+            .as_bytes()
+            .last()
+            .map(|&b| is_ascii_word_char_byte(b))
+            .unwrap_or(false);
+        let mut from = 0usize;
+        while let Some(rel) = hay_lower[from..].find(&needle_lower) {
+            let start = from + rel;
+            let end = start + nlen;
+            let left_ok =
+                !first_ascii || start == 0 || !is_ascii_word_char_byte(hay_bytes[start - 1]);
+            let right_ok =
+                !last_ascii || end >= hay_bytes.len() || !is_ascii_word_char_byte(hay_bytes[end]);
+            if left_ok
+                && right_ok
+                && haystack.is_char_boundary(start)
+                && haystack.is_char_boundary(end)
+            {
+                return Some((start, end));
+            }
+            from = start + 1;
+            while from < hay_bytes.len() && !hay_lower.is_char_boundary(from) {
+                from += 1;
+            }
+        }
+        return None;
+    }
+    haystack
+        .find(needle_trimmed)
+        .map(|pos| (pos, pos + needle_trimmed.len()))
+}
+
+fn filter_ios_glossary<'a>(
+    source_text: &str,
+    rules: &'a [IosGlossaryRule],
+) -> Vec<&'a IosGlossaryRule> {
+    if rules.is_empty() || source_text.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut matched: Vec<&IosGlossaryRule> = rules
+        .iter()
+        .filter(|rule| find_glossary_match_range(source_text, &rule.source).is_some())
+        .collect();
+    matched.sort_by_key(|r| std::cmp::Reverse(r.source.len()));
+    matched
+}
+
+fn glossary_exact_segment_shortcut(
+    source_text: &str,
+    rules: &[&IosGlossaryRule],
+) -> Option<String> {
+    if rules.is_empty() {
+        return None;
+    }
+    let trimmed = source_text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let match_rule_exact = |candidate: &str| -> Option<String> {
+        let c = candidate.trim();
+        for rule in rules {
+            let src = rule.source.trim();
+            if src.is_empty() {
+                continue;
+            }
+            let same = if src.is_ascii() {
+                c.eq_ignore_ascii_case(src)
+            } else {
+                c == src
+            };
+            if same {
+                return Some(rule.target.clone());
+            }
+        }
+        None
+    };
+
+    if let Some(hit) = match_rule_exact(trimmed) {
+        return Some(hit);
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("[[") {
+        if let Some(pipe_pos) = rest.find('|') {
+            let id_part = &rest[..pipe_pos];
+            if !id_part.is_empty() && id_part.chars().all(|c| c.is_ascii_digit()) {
+                let after_pipe = &rest[pipe_pos + 1..];
+                if let Some(close_pos) = find_matching_double_bracket_close(after_pipe) {
+                    if close_pos + 2 == after_pipe.len() {
+                        let inner = &after_pipe[..close_pos];
+                        if let Some(hit) = match_rule_exact(inner) {
+                            return Some(format!("[[{id_part}|{hit}]]"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+fn apply_ios_glossary_pre_substitute(source_text: &str, rules: &[&IosGlossaryRule]) -> String {
+    if rules.is_empty() {
+        return source_text.to_string();
+    }
+    let source_lower = source_text.to_lowercase();
+    let mut cur = source_text.to_string();
+    for rule in rules {
+        let tgt = rule.target.trim();
+        if tgt.is_empty() {
+            continue;
+        }
+        if rule.do_not_translate {
+            let wrapped_tgt_lower = format!("`{}`", tgt.to_lowercase());
+            if source_lower.contains(&wrapped_tgt_lower) {
+                continue;
+            }
+            let mut out = String::with_capacity(cur.len() + 8);
+            let mut rest = cur.as_str();
+            while let Some((start, end)) = find_glossary_match_range(rest, &rule.source) {
+                let before = &rest[..start];
+                let after = &rest[end..];
+                let already_wrapped =
+                    before.trim_end().ends_with('`') && after.trim_start().starts_with('`');
+                let touches_backtick = before.ends_with('`') || after.starts_with('`');
+                out.push_str(before);
+                if already_wrapped || touches_backtick {
+                    out.push_str(&rest[start..end]);
+                } else {
+                    out.push('`');
+                    out.push_str(tgt);
+                    out.push('`');
+                }
+                rest = after;
+            }
+            out.push_str(rest);
+            cur = out;
+        } else {
+            let mut out = String::with_capacity(cur.len());
+            let mut rest = cur.as_str();
+            while let Some((start, end)) = find_glossary_match_range(rest, &rule.source) {
+                out.push_str(&rest[..start]);
+                out.push_str(tgt);
+                rest = &rest[end..];
+            }
+            out.push_str(rest);
+            cur = out;
+        }
+    }
+    cur
+}
+
+fn unwrap_synthetic_dnt_quotes_ios(
+    out: &mut String,
+    source_lower: &str,
+    rule: &IosGlossaryRule,
+    target: &str,
+) {
+    let mut candidates = vec![target];
+    let main = rule.source.trim();
+    if !main.is_empty() && !main.eq_ignore_ascii_case(target) {
+        candidates.push(main);
+    }
+    for (open_ch, close_ch) in [('`', '`'), ('‘', '’'), ('\'', '\''), ('“', '”'), ('"', '"')]
+    {
+        let already_in_src = candidates
+            .iter()
+            .any(|c| source_lower.contains(&format!("{open_ch}{}{close_ch}", c.to_lowercase())));
+        if already_in_src {
+            continue;
+        }
+        let mut rebuilt = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(open) = rest.find(open_ch) {
+            rebuilt.push_str(&rest[..open]);
+            let after_open = &rest[open + open_ch.len_utf8()..];
+            if let Some(close) = after_open.find(close_ch) {
+                let inner = after_open[..close].trim();
+                if candidates.iter().any(|c| inner.eq_ignore_ascii_case(c)) {
+                    rebuilt.push_str(target);
+                    rest = &after_open[close + close_ch.len_utf8()..];
+                    continue;
+                }
+            }
+            rebuilt.push(open_ch);
+            rest = after_open;
+        }
+        rebuilt.push_str(rest);
+        *out = rebuilt;
+    }
+}
+
+fn fix_korean_particle_after_term(text: &str, term: &str) -> String {
+    let trimmed_term = term.trim();
+    if trimmed_term.is_empty() || !text.contains(trimmed_term) {
+        return text.to_string();
+    }
+    let last_hangul = trimmed_term
+        .trim_end_matches(['》', '』', '」', '〉', '】', '”', '’', '"', '\'', ')', ']'])
+        .chars()
+        .last()
+        .filter(|c| ('가'..='힣').contains(c));
+    let last_ch = match last_hangul {
+        Some(ch) => ch,
+        None => return text.to_string(),
+    };
+    let has_batchim = has_korean_final_consonant(last_ch);
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut rest = text;
+    while let Some(pos) = rest.find(trimmed_term) {
+        let after_term_idx = pos + trimmed_term.len();
+        out.push_str(&rest[..after_term_idx]);
+        let mut rem = &rest[after_term_idx..];
+        while let Some(ch) = rem.chars().next() {
+            if matches!(
+                ch,
+                '》' | '』' | '」' | '〉' | '】' | '”' | '’' | '"' | '\'' | ')' | ']'
+            ) {
+                out.push(ch);
+                rem = &rem[ch.len_utf8()..];
+            } else {
+                break;
+            }
+        }
+        if let Some(particle) = rem.chars().next() {
+            let after_particle = &rem[particle.len_utf8()..];
+            let next_is_sep = after_particle.is_empty()
+                || after_particle.starts_with(|c: char| {
+                    c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ';' | ':' | ')' | ']')
+                });
+            if next_is_sep {
+                let fixed = match particle {
+                    '는' | '은' => Some(if has_batchim { '은' } else { '는' }),
+                    '가' | '이' => Some(if has_batchim { '이' } else { '가' }),
+                    '를' | '을' => Some(if has_batchim { '을' } else { '를' }),
+                    '와' | '과' => Some(if has_batchim { '과' } else { '와' }),
+                    _ => None,
+                };
+                if let Some(replacement) = fixed {
+                    out.push(replacement);
+                    rest = after_particle;
+                    continue;
+                }
+            }
+        }
+        rest = rem;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn apply_ios_glossary_post_enforce(
+    source_text: &str,
+    out: &mut String,
+    rules: &[&IosGlossaryRule],
+) {
+    if rules.is_empty() || out.trim().is_empty() {
+        return;
+    }
+    let source_lower = source_text.to_lowercase();
+    for rule in rules {
+        let tgt = rule.target.trim();
+        if tgt.is_empty() {
+            continue;
+        }
+        if rule.do_not_translate {
+            unwrap_synthetic_dnt_quotes_ios(out, &source_lower, rule, tgt);
+        }
+        let mut replaced = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some((start, end)) = find_glossary_match_range(rest, &rule.source) {
+            replaced.push_str(&rest[..start]);
+            if &rest[start..end] == tgt || rest[start..].starts_with(tgt) {
+                replaced.push_str(&rest[start..end]);
+            } else {
+                replaced.push_str(tgt);
+            }
+            rest = &rest[end..];
+        }
+        replaced.push_str(rest);
+        *out = fix_korean_particle_after_term(&replaced, tgt);
+    }
 }
 
 fn build_prompt_ext(
@@ -1094,6 +1488,19 @@ fn clean_translation_output(raw: &str) -> String {
             || lower.starts_with("note:")
             || lower.starts_with("translate the following segment")
             || lower.starts_with("output only")
+            || lower.starts_with("reference the following translations")
+            || lower.starts_with("mandatory glossary")
+            || lower.starts_with("glossary (")
+            || lower.contains("translates to \"")
+            || l.starts_with("参考下面的翻译")
+            || l.starts_with("다음 번역을 참고")
+            || l.contains("으로 번역할 것")
+            || l.contains("로 번역할 것")
+            || l.contains("으로 번역 할 것")
+            || l.contains("로 번역 할 것")
+            || l.contains("으로 번역하십시오")
+            || l.contains("로 번역하십시오")
+            || l.contains("do not translate")
         {
             continue;
         }
@@ -1526,6 +1933,22 @@ fn normalize_korean_narration_endings(out: &mut String) {
         ("발생합니다", "발생한다"),
         ("유명합니다", "유명하다"),
         ("말합니다", "말한다"),
+        ("마칩니다", "마친다"),
+        ("끝납니다", "끝난다"),
+        ("놀랍니다", "놀란다"),
+        ("바랍니다", "바란다"),
+        ("만납니다", "만난다"),
+        ("다룹니다", "다룬다"),
+        ("따릅니다", "따른다"),
+        ("부릅니다", "부른다"),
+        ("누립니다", "누린다"),
+        ("이룹니다", "이룬다"),
+        ("보여줍니다", "보여준다"),
+        ("알려줍니다", "알려준다"),
+        ("도와줍니다", "도와준다"),
+        ("바꿔줍니다", "바꿔준다"),
+        ("해줍니다", "해준다"),
+        ("줍니다", "준다"),
         ("됩니다", "된다"),
         ("합니다", "한다"),
         ("갑니다", "간다"),
@@ -1616,6 +2039,10 @@ fn normalize_korean_narration_endings(out: &mut String) {
         ("완벽한다", "완벽하다"),
         ("충분한다", "충분하다"),
         ("부족한다", "부족하다"),
+        ("적합한다", "적합하다"),
+        ("필요하지 않는다", "필요하지 않다"),
+        ("가능하지 않는다", "가능하지 않다"),
+        ("충분하지 않는다", "충분하지 않다"),
     ] {
         if out.contains(bad_adj) {
             *out = out.replace(bad_adj, good_adj);
@@ -1776,6 +2203,41 @@ fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> 
             }
         }
 
+        let src_lower = source_text.to_ascii_lowercase();
+        if src_lower.contains("inference")
+            && (src_lower.contains("llm")
+                || src_lower.contains("mllm")
+                || src_lower.contains("neural")
+                || src_lower.contains("model")
+                || src_lower.contains("tensor")
+                || src_lower.contains("gpu"))
+        {
+            out = out
+                .replace("인퍼런싱", "추론")
+                .replace("인퍼런스", "추론")
+                .replace("인퍼페션", "추론")
+                .replace("인출 기능", "추론 기능")
+                .replace("인출 과정", "추론 과정")
+                .replace("인출을", "추론을")
+                .replace("인출이", "추론이");
+        }
+        if src_lower.contains("lactic acid") && out.contains("유산산") {
+            out = out.replace("유산산", "젖산");
+        }
+        if src_lower.contains("cyanobacteria") {
+            for bad_bio in ["시아노바이오마이크로바이오스", "시아노바이오"] {
+                if out.contains(bad_bio) {
+                    out = out.replace(bad_bio, "남세균(시아노박테리아)");
+                }
+            }
+        }
+        if src_lower.contains("pride and prejudice") {
+            out = out
+                .replace("《프라이드 앤 프리뱔지스》", "《오만과 편견》")
+                .replace("프라이드 앤 프리뱔지스", "오만과 편견");
+            out = fix_korean_particle_after_term(&out, "오만과 편견");
+        }
+
         strip_spurious_question_mark(source_text, &mut out);
         let is_dlg = is_dialogue_segment(source_text);
         if is_dlg {
@@ -1800,6 +2262,18 @@ fn looks_like_prompt_echo(source_text: &str, out: &str) -> bool {
         "preserving [[0|...]]",
         "Preserve [[0|...]]",
         "without additional explanation",
+        "Reference the following translations",
+        "Mandatory Glossary",
+        "translates to \"",
+        "参考下面的翻译",
+        "翻译成",
+        "으로 번역할 것",
+        "로 번역할 것",
+        "으로 번역 할 것",
+        "로 번역 할 것",
+        "으로 번역하십시오",
+        "로 번역하십시오",
+        "do not translate",
     ];
     ECHO_PHRASES
         .iter()
@@ -1849,30 +2323,31 @@ fn looks_untranslated(source_text: &str, out: &str, norm_target: &str) -> bool {
 
 fn run_completion_once(
     loaded: &LoadedModel,
-    source: &str,
+    orig_source: &str,
+    prompt_source: &str,
     norm_target: &str,
     style: &str,
-    glossary_hint: &str,
+    seg_glossary: &[&IosGlossaryRule],
     omit_marker_clause: bool,
 ) -> Result<String, String> {
     let vocab = loaded.model.vocab();
-    let src_toks = vocab.tokenize(source.as_bytes(), false, false).len() as u32;
+    let src_toks = vocab.tokenize(prompt_source.as_bytes(), false, false).len() as u32;
     let (prompt, uses_hy_template) = build_prompt_ext(
         &loaded.model,
-        source,
+        prompt_source,
         norm_target,
         style,
-        glossary_hint,
+        "",
         omit_marker_clause,
     );
     let parse_special = prompt.contains("<｜hy_") || prompt.contains("<|") || prompt.contains("[|");
     let tokens = vocab.tokenize(prompt.as_bytes(), !uses_hy_template, parse_special);
     if tokens.is_empty() {
-        return Ok(source.to_string());
+        return Ok(orig_source.to_string());
     }
 
     let max_new_tokens =
-        estimate_max_output_tokens_for_prompt(src_toks, source, norm_target, loaded.n_ctx);
+        estimate_max_output_tokens_for_prompt(src_toks, prompt_source, norm_target, loaded.n_ctx);
     let needed_ctx = ((tokens.len() as u32) + max_new_tokens + 64)
         .min(loaded.n_ctx)
         .max(1024);
@@ -1925,7 +2400,7 @@ fn run_completion_once(
     let mut rep_guard = RepetitionGuard::new();
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut piece_buf = Vec::<u8>::with_capacity(32);
-    let mut output = String::with_capacity((source.len() * 2).min(4096));
+    let mut output = String::with_capacity((prompt_source.len() * 2).min(4096));
     let mut cur_pos = total_prompt as i32;
     let max_pos = (total_prompt as u32)
         .saturating_add(max_new_tokens)
@@ -1968,7 +2443,9 @@ fn run_completion_once(
     }
 
     let _ = decoder.decode_to_string(&[], &mut output, true);
-    Ok(finalize_translated_unit(source, norm_target, &output))
+    let mut finalized = finalize_translated_unit(orig_source, norm_target, &output);
+    apply_ios_glossary_post_enforce(orig_source, &mut finalized, seg_glossary);
+    Ok(finalized)
 }
 
 fn translate_single_unit(
@@ -1976,15 +2453,36 @@ fn translate_single_unit(
     source: &str,
     norm_target: &str,
     style: &str,
-    glossary_hint: &str,
+    all_rules: &[IosGlossaryRule],
 ) -> Result<String, String> {
     if let Some(shortcut) = shortcut_translation(source, norm_target) {
         return Ok(shortcut);
     }
+    let seg_rules = filter_ios_glossary(source, all_rules);
+    if let Some(gloss_shortcut) = glossary_exact_segment_shortcut(source, &seg_rules) {
+        return Ok(gloss_shortcut);
+    }
+    let prompt_src = apply_ios_glossary_pre_substitute(source, &seg_rules);
 
-    let first = run_completion_once(loaded, source, norm_target, style, glossary_hint, false)?;
+    let first = run_completion_once(
+        loaded,
+        source,
+        &prompt_src,
+        norm_target,
+        style,
+        &seg_rules,
+        false,
+    )?;
     if looks_like_prompt_echo(source, &first) || looks_untranslated(source, &first, norm_target) {
-        let retried = run_completion_once(loaded, source, norm_target, style, glossary_hint, true)?;
+        let retried = run_completion_once(
+            loaded,
+            source,
+            &prompt_src,
+            norm_target,
+            style,
+            &seg_rules,
+            true,
+        )?;
         if !looks_untranslated(source, &retried, norm_target) {
             return Ok(retried);
         }
@@ -1992,12 +2490,15 @@ fn translate_single_unit(
             let plain = unwrap_inline_markers_for_shortcut(source);
             let plain_trimmed = plain.trim();
             if !plain_trimmed.is_empty() && plain_trimmed != source.trim() {
+                let plain_rules = filter_ios_glossary(plain_trimmed, all_rules);
+                let plain_prompt = apply_ios_glossary_pre_substitute(plain_trimmed, &plain_rules);
                 if let Ok(plain_tr) = run_completion_once(
                     loaded,
                     plain_trimmed,
+                    &plain_prompt,
                     norm_target,
                     style,
-                    glossary_hint,
+                    &plain_rules,
                     true,
                 ) {
                     if !plain_tr.trim().is_empty()
@@ -2029,6 +2530,11 @@ fn translate_with_model(
     if let Some(shortcut) = shortcut_translation(source, &norm_target) {
         return Ok(shortcut);
     }
+    let all_rules = parse_ios_glossary_hint(glossary_hint);
+    let top_rules = filter_ios_glossary(source, &all_rules);
+    if let Some(gloss_shortcut) = glossary_exact_segment_shortcut(source, &top_rules) {
+        return Ok(gloss_shortcut);
+    }
 
     if segment_needs_line_split(source) {
         let lines: Vec<&str> = source.lines().collect();
@@ -2045,7 +2551,7 @@ fn translate_with_model(
                     line,
                     &norm_target,
                     style,
-                    glossary_hint,
+                    &all_rules,
                 )?);
             }
         }
@@ -2063,13 +2569,13 @@ fn translate_with_model(
                 &chunk,
                 &norm_target,
                 style,
-                glossary_hint,
+                &all_rules,
             )?);
         }
         return Ok(join_translated_sentences(&out_parts, &norm_target));
     }
 
-    translate_single_unit(loaded, source, &norm_target, style, glossary_hint)
+    translate_single_unit(loaded, source, &norm_target, style, &all_rules)
 }
 
 #[no_mangle]

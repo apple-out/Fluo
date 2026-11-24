@@ -901,6 +901,13 @@ pub fn load_page_translations(
     Ok(map)
 }
 
+pub fn clear_page_translations(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute("DELETE FROM page_translations", [])
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 /// Bookmarks first, then history, deduplicated by URL for the address bar.
 pub fn search_address_suggestions(
     connection: &Connection,

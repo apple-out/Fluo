@@ -1262,7 +1262,7 @@ async fn run_translation_request(
     };
     let provider_key = match settings.provider {
         ProviderKind::GoogleGemini => settings.provider.as_str().to_string(),
-        ProviderKind::HyMt2 => "hy-mt2|v6".to_string(),
+        ProviderKind::HyMt2 => "hy-mt2|v7".to_string(),
         ProviderKind::CodexLegacy => format!(
             "{}|{}",
             settings.provider.as_str(),
@@ -2502,13 +2502,17 @@ fn save_glossary(state: State<'_, AppState>, entry: GlossaryEntry) -> Result<(),
     entry.source = source;
     entry.aliases = entry.aliases.trim().to_string();
     let db = lock(&state.db);
-    db::upsert_glossary(&db, &entry)
+    db::upsert_glossary(&db, &entry)?;
+    let _ = db::clear_page_translations(&db);
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_glossary(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let db = lock(&state.db);
-    db::delete_glossary(&db, &id)
+    db::delete_glossary(&db, &id)?;
+    let _ = db::clear_page_translations(&db);
+    Ok(())
 }
 
 #[tauri::command]
@@ -3612,11 +3616,11 @@ mod tests {
     }
 
     #[test]
-    fn new_tabs_start_at_the_configured_search_engine() {
-        assert_eq!(home_url("google"), "https://www.google.com/");
-        assert_eq!(home_url("bing"), "https://www.bing.com/");
-        assert_eq!(home_url("duckduckgo"), "https://duckduckgo.com/");
-        assert_eq!(home_url("unknown"), "https://www.google.com/");
+    fn new_tabs_start_at_the_dedicated_start_page() {
+        assert_eq!(home_url("google"), crate::browser::DEFAULT_URL);
+        assert_eq!(home_url("bing"), crate::browser::DEFAULT_URL);
+        assert_eq!(home_url("duckduckgo"), crate::browser::DEFAULT_URL);
+        assert_eq!(home_url("unknown"), crate::browser::DEFAULT_URL);
     }
 
     #[test]

@@ -2379,6 +2379,10 @@
       // Ignore storage errors.
     }
     if (pageKind) {
+      const chromeTop = (window as Window & { __APP_CHROME_TOP__?: number }).__APP_CHROME_TOP__;
+      if (typeof chromeTop === "number" && Number.isFinite(chromeTop)) {
+        document.documentElement.style.setProperty("--chrome-top", `${chromeTop}px`);
+      }
       requestAnimationFrame(() => {
         try {
           (
@@ -6000,7 +6004,8 @@
     max-width: 820px;
     height: 100%;
     margin: 0 auto;
-    padding: 40px 24px 36px;
+    padding: 28px 24px 40px;
+    box-sizing: border-box;
     overflow-y: auto;
     display: grid;
     gap: 22px;
@@ -6493,10 +6498,19 @@
   .internal-page-root {
     width: 100%;
     height: 100vh;
+    padding-top: var(--chrome-top, 112px);
+    box-sizing: border-box;
     background: var(--glass-shell-bg);
     color: var(--text);
     overflow: hidden;
     animation: pageFadeIn 0.36s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .internal-page-root :global(.backdrop.embedded) {
+    position: static;
+    width: 100%;
+    height: 100%;
+    padding: 0;
   }
 
   .prompt-banner {

@@ -483,10 +483,10 @@ fn create_webview(app: &AppHandle, top: f64, tab: &Tab) -> Result<(), String> {
     };
 
     if let Some(kind) = tab.url.strip_prefix("tb://") {
+        let chrome_top = top.clamp(38.0, 360.0);
         let init_script = format!(
-            "window.__APP_PAGE_KIND__ = {}; try {{ if (document.documentElement) document.documentElement.style.background = '{}'; }} catch {{}}",
+            "window.__APP_PAGE_KIND__ = {}; window.__APP_CHROME_TOP__ = {chrome_top}; try {{ if (document.documentElement) {{ document.documentElement.style.background = '{bg_css}'; document.documentElement.style.setProperty('--chrome-top', '{chrome_top}px'); }} }} catch {{}} window.addEventListener('DOMContentLoaded', () => {{ try {{ const h = typeof window.__APP_CHROME_TOP__ === 'number' ? window.__APP_CHROME_TOP__ : {chrome_top}; document.documentElement.style.setProperty('--chrome-top', h + 'px'); }} catch {{}} }}, {{ once: true }});",
             serde_json::to_string(kind).map_err(|error| error.to_string())?,
-            bg_css
         );
         let builder = WebviewBuilder::new(tab.label.clone(), WebviewUrl::App("/".into()))
             .focused(false)
@@ -781,14 +781,15 @@ pub fn set_shell_expanded(app: &AppHandle, expanded: bool) -> Result<(), String>
 }
 
 pub fn sync_shell_bounds(app: &AppHandle) -> Result<(), String> {
-    let (top, expanded, should_blur, active_label) = {
+    let (top, expanded, should_blur, active_tab_info) = {
         let state = app.state::<AppState>();
         let tabs = lock(&state.tabs);
         (
             tabs.top,
             tabs.overlay_open || tabs.suggestions_open,
             (tabs.overlay_open && tabs.overlay_blur) || tabs.suggestions_open,
-            tabs.active_tab().map(|tab| tab.label.clone()),
+            tabs.active_tab()
+                .map(|tab| (tab.label.clone(), tab.url.starts_with("tb://"))),
         )
     };
     let window = window(app)?;
@@ -800,18 +801,23 @@ pub fn sync_shell_bounds(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("화면 배율을 읽지 못했습니다: {error}"))?;
     let width = size.width as f64 / scale;
     let height = size.height as f64 / scale;
+    let chrome_top = top.clamp(38.0, 360.0);
     let shell_height = if expanded {
         height.max(1.0)
     } else {
-        top.clamp(38.0, 360.0)
+        chrome_top
     };
-    if let Some(label) = active_label
+    if let Some((label, is_internal)) = active_tab_info
         && let Some(webview) = app.get_webview(&label)
     {
-        let _ = webview.eval(format!(
-            "window.__tbSetPopupBlur?.({});",
-            if should_blur { "true" } else { "false" }
-        ));
+        let blur_js = if should_blur { "true" } else { "false" };
+        if is_internal {
+            let _ = webview.eval(format!(
+                "window.__APP_CHROME_TOP__ = {chrome_top}; document.documentElement.style.setProperty('--chrome-top', '{chrome_top}px'); window.__tbSetPopupBlur?.({blur_js});"
+            ));
+        } else {
+            let _ = webview.eval(format!("window.__tbSetPopupBlur?.({blur_js});"));
+        }
     }
     if let Some(shell) = app.get_webview("shell") {
         let _ = shell.set_position(LogicalPosition::new(0.0, 0.0));
