@@ -5,6 +5,7 @@ import WebKit
 enum ActiveSheetKind: String, Identifiable {
     case translate
     case tabs
+    case workspaces
     case menu
     case bookmarks
     case bookmarkEditor
@@ -549,10 +550,15 @@ struct ContentView: View {
                     )
                     .presentationDetents([.medium, .large])
                 case .tabs:
-                    TabsSheet(store: store, onClose: {
-                        activeSheet = nil
-                    })
+                    TabsSheet(
+                        store: store,
+                        openWorkspaces: { switchSheet(.workspaces) },
+                        onClose: { activeSheet = nil }
+                    )
                     .presentationDetents([.medium, .large])
+                case .workspaces:
+                    WorkspacesSheet(store: store, onClose: { activeSheet = nil })
+                        .presentationDetents([.medium, .large])
                 case .menu:
                     MenuSheet(
                         store: store,
@@ -580,7 +586,7 @@ struct ContentView: View {
                     )
                 case .bookmarkEditor:
                     BookmarkEditorSheet(store: store, existing: editingBookmark)
-                        .presentationDetents([.medium])
+                        .presentationDetents([.medium, .large])
                 case .siteSecurity:
                     SiteSecuritySheet(store: store)
                         .presentationDetents([.medium])

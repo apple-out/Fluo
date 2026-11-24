@@ -1145,19 +1145,34 @@ final class BrowserStore: ObservableObject {
             closedTabs.append((url: removed.urlString, title: removed.title))
             if closedTabs.count > 20 { closedTabs.removeFirst() }
         }
-        if tabs.count == 1 {
-            removed.openStartPage()
-            persistUserData()
-            return
+        let removedWsId = removed.workspaceId
+        let wsTabsBefore = tabs.filter { $0.workspaceId == removedWsId }
+        let wsIdx = wsTabsBefore.firstIndex(where: { $0.id == id }) ?? 0
+
+        if id == activeTabId {
+            stopTTS()
+            showAutoTranslatePrompt = false
+            liveWebSelection = ""
         }
-        tabCancellables.removeValue(forKey: id)
-        removed.tearDown()
-        tabs.remove(at: idx)
-        if !tabs.contains(where: { $0.id == activeTabId }) {
-            let next = activeWorkspaceTabs.first ?? tabs[0]
+
+        let remainingInWs = wsTabsBefore.filter { $0.id != id }
+        if remainingInWs.isEmpty {
+            let startURL = URL(string: FluoUserDataSnapshot.startPageURL)!
+            let fresh = BrowserTab(initialURL: startURL, workspaceId: removedWsId, isPrivate: false)
+            wireTabCallbacks(fresh)
+            tabs.append(fresh)
+            if activeTabId == id || removedWsId == userData.activeWorkspaceId {
+                activeTabId = fresh.id
+            }
+        } else if activeTabId == id {
+            let next = remainingInWs[min(wsIdx, remainingInWs.count - 1)]
             next.wakeIfNeeded()
             activeTabId = next.id
         }
+
+        tabCancellables.removeValue(forKey: id)
+        removed.tearDown()
+        tabs.removeAll { $0.id == id }
         persistUserData()
     }
 
