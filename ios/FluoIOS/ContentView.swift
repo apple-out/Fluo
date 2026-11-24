@@ -286,24 +286,34 @@ struct ContentView: View {
                             .font(.caption)
                             .lineLimit(1)
                             .frame(maxWidth: 140, alignment: .leading)
-                        Button(t("tr.selection")) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                             store.translateSelectedText()
+                        } label: {
+                            Text(t("tr.selection"))
+                                .font(.caption.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(FluoThemeTokens.liquidGradient, in: Capsule())
+                                .contentShape(Capsule())
                         }
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+                        .buttonStyle(.plain)
 
-                        Button(t("sel.addGlossary")) {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             store.addGlossaryItem(source: store.liveWebSelection, target: "", caseSensitive: false)
                             store.liveWebSelection = ""
                             activeSheet = .glossary
+                        } label: {
+                            Text(t("sel.addGlossary"))
+                                .font(.caption.bold())
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.primary.opacity(0.10), in: Capsule())
+                                .contentShape(Capsule())
                         }
-                        .font(.caption.bold())
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .liquidGlassPill(interactive: true)
+                        .buttonStyle(.plain)
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
@@ -344,9 +354,10 @@ struct ContentView: View {
                         } label: {
                             Text(String(format: "%.2gx", store.ttsRate))
                                 .font(.caption2.bold())
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .liquidGlassPill(interactive: true)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.10), in: Capsule())
+                                .contentShape(Capsule())
                         }
                         .buttonStyle(.plain)
                         Button {
@@ -354,6 +365,8 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -364,42 +377,63 @@ struct ContentView: View {
                 }
 
                 if !isEditingURL && store.showAutoTranslatePrompt && !store.isTranslating && store.activeTab.displayMode == .original {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkles")
-                            .font(.caption.bold())
-                            .foregroundStyle(FluoThemeTokens.indigo)
-                        Text("\(t("tr.autoPrompt")) (\(store.detectedForeignLanguageCode))")
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Button(t("bar.translate")) {
-                            store.translateActiveTab(bilingual: false)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                                .font(.caption.bold())
+                                .foregroundStyle(FluoThemeTokens.indigo)
+                            Text("\(t("tr.autoPrompt")) (\(store.detectedForeignLanguageCode))")
+                                .font(.caption.weight(.bold))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                store.dismissAutoTranslatePrompt()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 32, height: 32)
+                                    .contentShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(t("common.close"))
                         }
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
-                        .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
 
-                        Button(t("tr.alwaysHost")) {
-                            store.toggleAlwaysTranslateCurrentHost()
-                        }
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .liquidGlassPill(interactive: true)
+                        HStack(spacing: 8) {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.showAutoTranslatePrompt = false
+                                store.translateActiveTab(bilingual: false)
+                            } label: {
+                                Label(t("bar.translate"), systemImage: "sparkles")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 9)
+                                    .background(FluoThemeTokens.liquidGradient, in: Capsule())
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
 
-                        Button {
-                            store.showAutoTranslatePrompt = false
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                store.toggleAlwaysTranslateCurrentHost()
+                            } label: {
+                                Text(t("tr.alwaysHost"))
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 9)
+                                    .background(Color.primary.opacity(0.10), in: Capsule())
+                                    .contentShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .liquidGlassPill()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .liquidGlass(cornerRadius: 22)
                     .padding(.horizontal, 12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -421,6 +455,8 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -450,6 +486,8 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: "xmark.circle.fill")
                                 .foregroundStyle(.secondary)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -499,21 +537,36 @@ struct ContentView: View {
             Group {
                 switch kind {
                 case .translate:
-                    TranslateSheet(store: store, catalog: catalog, openSettings: {
-                        switchSheet(.settings)
-                    })
+                    TranslateSheet(
+                        store: store,
+                        catalog: catalog,
+                        openSettings: {
+                            switchSheet(.settings)
+                        },
+                        onClose: {
+                            activeSheet = nil
+                        }
+                    )
                     .presentationDetents([.medium, .large])
                 case .tabs:
-                    TabsSheet(store: store)
-                        .presentationDetents([.medium, .large])
-                case .menu:
-                    MenuSheet(store: store, openSheet: { target in
-                        if target == .bookmarkEditor {
-                            openBookmarkEditor(for: store.currentBookmark())
-                        } else {
-                            switchSheet(target)
-                        }
+                    TabsSheet(store: store, onClose: {
+                        activeSheet = nil
                     })
+                    .presentationDetents([.medium, .large])
+                case .menu:
+                    MenuSheet(
+                        store: store,
+                        openSheet: { target in
+                            if target == .bookmarkEditor {
+                                openBookmarkEditor(for: store.currentBookmark())
+                            } else {
+                                switchSheet(target)
+                            }
+                        },
+                        onClose: {
+                            activeSheet = nil
+                        }
+                    )
                     .presentationDetents([.medium, .large])
                 case .bookmarks:
                     BookmarksSheet(

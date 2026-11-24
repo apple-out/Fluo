@@ -61,6 +61,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
 
     var lastActiveAt: Date = Date()
     var cameFromStartPage: Bool = false
+    var dismissedAutoTranslateURL: String? = nil
 
     var isStartPage: Bool {
         urlString == FluoUserDataSnapshot.startPageURL
@@ -349,6 +350,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         }
         if let target = Self.resolveInputToURL(trimmed, searchEngine: searchEngine) {
             displayMode = .original
+            dismissedAutoTranslateURL = nil
             urlString = target.absoluteString
             canGoBack = webView.canGoBack || cameFromStartPage
             canGoForward = webView.canGoForward
@@ -360,6 +362,7 @@ final class BrowserTab: NSObject, Identifiable, ObservableObject, WKNavigationDe
         webView.stopLoading()
         isSleeping = false
         pageErrorText = nil
+        dismissedAutoTranslateURL = nil
         cameFromStartPage = true
         displayMode = .original
         urlString = FluoUserDataSnapshot.startPageURL
@@ -805,8 +808,17 @@ final class BrowserStore: ObservableObject {
         }
     }
 
+    func dismissAutoTranslatePrompt() {
+        activeTab.dismissedAutoTranslateURL = activeTab.urlString
+        showAutoTranslatePrompt = false
+    }
+
     private func evaluateAutoTranslatePolicy(for tab: BrowserTab, detectedLang: String) {
         guard !tab.isStartPage, tab.displayMode == .original, !isTranslating else { return }
+        guard tab.dismissedAutoTranslateURL != tab.urlString else {
+            showAutoTranslatePrompt = false
+            return
+        }
         guard detectedLang != "unknown" else { return }
         let targetCode: String = {
             let low = targetLanguage.lowercased()
@@ -2170,6 +2182,7 @@ final class BrowserStore: ObservableObject {
                     return
                 }
                 var segments: [(key: String, text: String)] = blocks.compactMap { b in
+                    if (b["kind"] as? String) == "code" { return nil }
                     guard let k = (b["inlineKey"] as? String) ?? (b["key"] as? String),
                           let t = b["text"] as? String, !t.isEmpty else { return nil }
                     return (k, t)
@@ -2270,35 +2283,67 @@ final class BrowserStore: ObservableObject {
                         idx = end
                     }
                 } else {
+                    var sessionTranslated: [String: String] = [:]
                     for seg in uncached {
                         try Task.checkCancellation()
-                        let tr = try await TranslationEngine.shared.translateText(
-                            seg.text,
-                            provider: currentProvider,
-                            modelId: currentModel,
-                            baseUrl: currentBase,
-                            targetLanguage: currentTarget,
-                            style: currentStyle,
-                            glossary: currentGlossary
-                        )
-                        if !tab.isPrivate {
-                            TranslationEngine.shared.storeCachedTranslation(
-                                tr,
-                                for: seg.text,
-                                targetLanguage: currentTarget,
-                                style: currentStyle
+                        let trimmedKey = seg.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if let dupHit = sessionTranslated[trimmedKey] {
+                            translationDone += 1
+                            await applyTranslatedSegments(
+                                [(key: seg.key, translation: dupHit)],
+                                on: tab,
+                                applyJs: applyJs,
+                                fontScale: currentFontScale,
+                                lineHeight: currentLineHeight,
+                                bilingual: bilingual,
+                                uiJson: uiJson
                             )
+                            continue
                         }
-                        translationDone += 1
-                        await applyTranslatedSegments(
-                            [(key: seg.key, translation: tr)],
-                            on: tab,
-                            applyJs: applyJs,
-                            fontScale: currentFontScale,
-                            lineHeight: currentLineHeight,
-                            bilingual: bilingual,
-                            uiJson: uiJson
-                        )
+                        do {
+                            let tr = try await TranslationEngine.shared.translateText(
+                                seg.text,
+                                provider: currentProvider,
+                                modelId: currentModel,
+                                baseUrl: currentBase,
+                                targetLanguage: currentTarget,
+                                style: currentStyle,
+                                glossary: currentGlossary
+                            )
+                            sessionTranslated[trimmedKey] = tr
+                            if !tab.isPrivate {
+                                TranslationEngine.shared.storeCachedTranslation(
+                                    tr,
+                                    for: seg.text,
+                                    targetLanguage: currentTarget,
+                                    style: currentStyle
+                                )
+                            }
+                            translationDone += 1
+                            await applyTranslatedSegments(
+                                [(key: seg.key, translation: tr)],
+                                on: tab,
+                                applyJs: applyJs,
+                                fontScale: currentFontScale,
+                                lineHeight: currentLineHeight,
+                                bilingual: bilingual,
+                                uiJson: uiJson
+                            )
+                        } catch let ce as CancellationError {
+                            throw ce
+                        } catch {
+                            let nsErr = error as NSError
+                            let msg = error.localizedDescription.lowercased()
+                            if (nsErr.domain == "FluoInference" && (nsErr.code == -2 || nsErr.code == -4))
+                                || msg.contains("not installed")
+                                || msg.contains("no on-device model")
+                                || msg.contains("failed to load")
+                                || msg.contains("cancelled")
+                            {
+                                throw error
+                            }
+                            translationDone += 1
+                        }
                     }
                 }
 

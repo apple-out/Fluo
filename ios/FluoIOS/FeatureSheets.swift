@@ -119,9 +119,22 @@ struct TranslateSheet: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject var catalog: ModelCatalog
     var openSettings: () -> Void
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private func closeSheet() {
+        onClose?()
+        dismiss()
+    }
+
+    private func dismissAndRun(_ work: @escaping () -> Void) {
+        closeSheet()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+            work()
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -150,10 +163,10 @@ struct TranslateSheet: View {
                                             .foregroundStyle(.white)
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 12)
+                                            .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: false, prominent: true)
                                             .contentShape(Capsule())
                                     }
                                     .buttonStyle(LiquidPressButtonStyle())
-                                    .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
                                 }
                             }
                             .padding(16)
@@ -170,82 +183,71 @@ struct TranslateSheet: View {
                         }
 
                         // 3-Column Display Mode Hero Cards
-                        LiquidGlassGroup(spacing: 10) {
-                            HStack(spacing: 10) {
-                                displayModeCard(
-                                    title: t("tr.original"),
-                                    icon: "doc.plaintext",
-                                    tint: FluoThemeTokens.cyan,
-                                    active: store.activeTab.displayMode == .original
-                                ) {
-                                    dismiss()
-                                    store.restoreOriginal()
-                                }
+                        HStack(spacing: 10) {
+                            displayModeCard(
+                                title: t("tr.original"),
+                                icon: "doc.plaintext",
+                                tint: FluoThemeTokens.cyan,
+                                active: store.activeTab.displayMode == .original
+                            ) {
+                                dismissAndRun { store.restoreOriginal() }
+                            }
 
-                                displayModeCard(
-                                    title: t("tr.inline"),
-                                    icon: "sparkles",
-                                    tint: FluoThemeTokens.indigo,
-                                    active: store.activeTab.displayMode == .inline
-                                ) {
-                                    dismiss()
-                                    store.translateActiveTab(bilingual: false)
-                                }
+                            displayModeCard(
+                                title: t("tr.inline"),
+                                icon: "sparkles",
+                                tint: FluoThemeTokens.indigo,
+                                active: store.activeTab.displayMode == .inline
+                            ) {
+                                dismissAndRun { store.translateActiveTab(bilingual: false) }
+                            }
 
-                                displayModeCard(
-                                    title: t("tr.bilingual"),
-                                    icon: "rectangle.split.2x1",
-                                    tint: FluoThemeTokens.violet,
-                                    active: store.activeTab.displayMode == .bilingual
-                                ) {
-                                    dismiss()
-                                    store.translateActiveTab(bilingual: true)
-                                }
+                            displayModeCard(
+                                title: t("tr.bilingual"),
+                                icon: "rectangle.split.2x1",
+                                tint: FluoThemeTokens.violet,
+                                active: store.activeTab.displayMode == .bilingual
+                            ) {
+                                dismissAndRun { store.translateActiveTab(bilingual: true) }
                             }
                         }
 
                         // 4-Column Tactile Reading Actions Strip
-                        LiquidGlassGroup(spacing: 8) {
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                                studioToolCard(
-                                    title: t("tr.regionPicker"),
-                                    icon: "hand.tap",
-                                    tint: FluoThemeTokens.amber,
-                                    active: store.isPickingRegion
-                                ) {
-                                    dismiss()
-                                    store.startRegionPicker(bilingual: false)
-                                }
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                            studioToolCard(
+                                title: t("tr.regionPicker"),
+                                icon: "hand.tap",
+                                tint: FluoThemeTokens.amber,
+                                active: store.isPickingRegion
+                            ) {
+                                dismissAndRun { store.startRegionPicker(bilingual: false) }
+                            }
 
-                                studioToolCard(
-                                    title: t("tr.selection"),
-                                    icon: "text.quote",
-                                    tint: FluoThemeTokens.emerald,
-                                    active: false
-                                ) {
-                                    dismiss()
-                                    store.translateSelectedText()
-                                }
+                            studioToolCard(
+                                title: t("tr.selection"),
+                                icon: "text.quote",
+                                tint: FluoThemeTokens.emerald,
+                                active: false
+                            ) {
+                                dismissAndRun { store.translateSelectedText() }
+                            }
 
-                                studioToolCard(
-                                    title: t("tr.aiSummary"),
-                                    icon: "sparkles.rectangle.stack.fill",
-                                    tint: FluoThemeTokens.violet,
-                                    active: false
-                                ) {
-                                    dismiss()
-                                    store.summarizeActivePage()
-                                }
+                            studioToolCard(
+                                title: t("tr.aiSummary"),
+                                icon: "sparkles.rectangle.stack.fill",
+                                tint: FluoThemeTokens.violet,
+                                active: false
+                            ) {
+                                dismissAndRun { store.summarizeActivePage() }
+                            }
 
-                                studioToolCard(
-                                    title: t("tr.tts"),
-                                    icon: store.isSpeakingTTS ? "speaker.wave.3.fill" : "speaker.wave.2.fill",
-                                    tint: FluoThemeTokens.cyan,
-                                    active: store.isSpeakingTTS
-                                ) {
-                                    dismiss()
-                                    store.startOrToggleTTS()
-                                }
+                            studioToolCard(
+                                title: t("tr.tts"),
+                                icon: store.isSpeakingTTS ? "speaker.wave.3.fill" : "speaker.wave.2.fill",
+                                tint: FluoThemeTokens.cyan,
+                                active: store.isSpeakingTTS
+                            ) {
+                                dismissAndRun { store.startOrToggleTTS() }
                             }
                         }
 
@@ -276,32 +278,32 @@ struct TranslateSheet: View {
                                 .textCase(.uppercase)
 
                             ScrollView(.horizontal, showsIndicators: false) {
-                                LiquidGlassGroup(spacing: 8) {
-                                    HStack(spacing: 8) {
-                                        ForEach(TranslationStyle.allCases) { st in
-                                            let active = store.userData.style == st
-                                            Button {
-                                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                                                store.userData.style = st
-                                                store.savePreferences()
-                                            } label: {
-                                                Text(t("style.\(st.rawValue)"))
-                                                    .font(.caption.weight(.bold))
-                                                    .padding(.horizontal, 13)
-                                                    .padding(.vertical, 8)
-                                                    .foregroundStyle(active ? .white : .primary)
-                                                    .contentShape(Capsule())
-                                            }
-                                            .buttonStyle(LiquidPressButtonStyle())
-                                            .liquidGlassPill(
-                                                tint: active ? FluoThemeTokens.indigo : .clear,
-                                                interactive: true,
-                                                prominent: active
-                                            )
+                                HStack(spacing: 8) {
+                                    ForEach(TranslationStyle.allCases) { st in
+                                        let active = store.userData.style == st
+                                        Button {
+                                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                            store.userData.style = st
+                                            store.savePreferences()
+                                        } label: {
+                                            Text(t("style.\(st.rawValue)"))
+                                                .font(.caption.weight(.bold))
+                                                .padding(.horizontal, 13)
+                                                .padding(.vertical, 8)
+                                                .foregroundStyle(active ? .white : .primary)
+                                                .background {
+                                                    if active {
+                                                        Capsule().fill(FluoThemeTokens.liquidGradient)
+                                                    } else {
+                                                        Capsule().fill(Color.primary.opacity(0.08))
+                                                    }
+                                                }
+                                                .contentShape(Capsule())
                                         }
+                                        .buttonStyle(LiquidPressButtonStyle())
                                     }
-                                    .padding(.vertical, 2)
                                 }
+                                .padding(.vertical, 2)
                             }
 
                             VStack(alignment: .leading, spacing: 4) {
@@ -356,7 +358,9 @@ struct TranslateSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(t("common.close")) { dismiss() }
+                    Button(t("common.close")) {
+                        closeSheet()
+                    }
                 }
             }
         }
@@ -377,15 +381,15 @@ struct TranslateSheet: View {
             }
             .frame(maxWidth: .infinity, minHeight: 96)
             .padding(10)
+            .liquidGlass(
+                cornerRadius: 22,
+                tint: active ? tint : .clear,
+                interactive: false,
+                prominent: active
+            )
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         .buttonStyle(LiquidPressButtonStyle())
-        .liquidGlass(
-            cornerRadius: 22,
-            tint: active ? tint : .clear,
-            interactive: true,
-            prominent: active
-        )
     }
 
     private func studioToolCard(title: String, icon: String, tint: Color, active: Bool, action: @escaping () -> Void) -> some View {
@@ -404,20 +408,21 @@ struct TranslateSheet: View {
             .frame(maxWidth: .infinity, minHeight: 78)
             .padding(.horizontal, 6)
             .padding(.vertical, 8)
+            .liquidGlass(
+                cornerRadius: 20,
+                tint: active ? tint : .clear,
+                interactive: false,
+                prominent: active
+            )
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(LiquidPressButtonStyle())
-        .liquidGlass(
-            cornerRadius: 20,
-            tint: active ? tint : .clear,
-            interactive: true,
-            prominent: active
-        )
     }
 }
 
 struct TabsSheet: View {
     @ObservedObject var store: BrowserStore
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var showNewWorkspace = false
@@ -427,6 +432,11 @@ struct TabsSheet: View {
     @State private var tabSearch = ""
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private func closeSheet() {
+        onClose?()
+        dismiss()
+    }
 
     private var activeWorkspace: WorkspaceItem? {
         store.userData.workspaces.first(where: { $0.id == store.userData.activeWorkspaceId })
@@ -807,7 +817,7 @@ struct TabsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(t("common.close")) { dismiss() }
+                    Button(t("common.close")) { closeSheet() }
                 }
             }
             .alert(t("ws.new"), isPresented: $showNewWorkspace) {
@@ -827,11 +837,17 @@ struct TabsSheet: View {
 struct MenuSheet: View {
     @ObservedObject var store: BrowserStore
     var openSheet: (ActiveSheetKind) -> Void
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
     @State private var copiedFeedback = false
 
     private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    private func closeSheet() {
+        onClose?()
+        dismiss()
+    }
 
     var body: some View {
         NavigationStack {
@@ -1116,7 +1132,7 @@ struct MenuSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(t("common.close")) { dismiss() }
+                    Button(t("common.close")) { closeSheet() }
                 }
             }
         }

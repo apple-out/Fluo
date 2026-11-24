@@ -32,7 +32,7 @@ final class TranslationEngine {
 
     private func makeCacheKey(source: String, targetLanguage: String, style: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "v2|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
+        return "v3|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
     }
 
     func cachedTranslation(for source: String, targetLanguage: String, style: String) -> String? {
@@ -82,7 +82,7 @@ final class TranslationEngine {
         defer { lock.unlock() }
         if activeLocalModelPath == path { return }
         let code = path.path.withCString { cPath in
-            fluo_load_model(cPath, 99, 1024)
+            fluo_load_model(cPath, 99, 2048)
         }
         guard code == 0 else {
             var detail = ""
