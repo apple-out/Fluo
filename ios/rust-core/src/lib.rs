@@ -968,7 +968,58 @@ struct IosGlossaryRule {
     do_not_translate: bool,
 }
 
-fn parse_ios_glossary_hint(glossary_hint: &str) -> Vec<IosGlossaryRule> {
+fn sanitize_page_title_context(title: &str) -> Option<String> {
+    let mut collapsed = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("tb://") {
+        return None;
+    }
+    for suffix in [
+        " - Wikipedia",
+        " — Wikipedia",
+        " - Wikipédia",
+        " — Wikipédia",
+        " - 위키백과",
+        " - 维基百科",
+        " - 維基百科",
+        " - GitHub",
+        " — GitHub",
+        " | GitHub",
+        " | MDN",
+        " - MDN",
+        " - YouTube",
+        " - Google Search",
+        " - Google 검색",
+    ] {
+        if let Some(stripped) = collapsed.strip_suffix(suffix) {
+            let s = stripped.trim();
+            if s.chars().count() >= 2 {
+                collapsed = s.to_string();
+            }
+        }
+    }
+    let clean = collapsed.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    let clean_lower = clean.to_ascii_lowercase();
+    if matches!(
+        clean_lower.as_str(),
+        "fluo" | "new tab" | "새 탭" | "untitled" | "blank" | "start" | "home" | "about:blank"
+    ) {
+        return None;
+    }
+    let clipped: String = clean.chars().take(80).collect();
+    let has_word_char = clipped.chars().any(|c| c.is_alphabetic());
+    has_word_char.then(|| clipped.trim().to_string())
+}
+
+fn parse_ios_glossary_hint(glossary_hint: &str) -> (Option<String>, Vec<IosGlossaryRule>) {
+    let mut page_title: Option<String> = None;
     let mut rules = Vec::new();
     for raw_line in glossary_hint.lines() {
         let trimmed = raw_line.trim();
@@ -982,6 +1033,12 @@ fn parse_ios_glossary_hint(glossary_hint: &str) -> Vec<IosGlossaryRule> {
         };
         if let Some((src, rhs)) = pair {
             let clean_src = src.trim();
+            if clean_src == "@page_title" {
+                if page_title.is_none() {
+                    page_title = sanitize_page_title_context(rhs);
+                }
+                continue;
+            }
             if clean_src.is_empty() {
                 continue;
             }
@@ -1005,7 +1062,7 @@ fn parse_ios_glossary_hint(glossary_hint: &str) -> Vec<IosGlossaryRule> {
             });
         }
     }
-    rules
+    (page_title, rules)
 }
 
 fn is_ascii_word_char_byte(b: u8) -> bool {
@@ -1315,6 +1372,7 @@ fn build_prompt_ext(
     source: &str,
     norm_target: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary_hint: &str,
     omit_marker_clause: bool,
 ) -> (String, bool) {
@@ -1363,6 +1421,24 @@ fn build_prompt_ext(
         sections.push(lines.join("\n"));
     }
 
+    let clean_topic = page_title
+        .and_then(sanitize_page_title_context)
+        .filter(|t| {
+            !is_dialogue
+                && source.chars().count() >= 24
+                && !source
+                    .to_ascii_lowercase()
+                    .contains(&t.to_ascii_lowercase())
+        });
+    let has_bg = clean_topic.is_some();
+    if let Some(topic) = clean_topic {
+        if use_zh_template {
+            sections.push(format!("[背景信息]\n主题：{topic}"));
+        } else {
+            sections.push(format!("[Background Information]\nTopic: {topic}"));
+        }
+    }
+
     let has_markers = !omit_marker_clause && source.contains("[[") && source.contains("]]");
     let has_link_markers = has_markers && source.contains('|');
     let has_img_markers = !omit_marker_clause && source.contains("[[img");
@@ -1380,9 +1456,15 @@ fn build_prompt_ext(
         } else {
             ""
         };
-        sections.push(format!(
-            "将以下文本翻译为{zh_lang}{marker_clause_zh}，注意只需要输出翻译后的结果，不要额外解释：\n\n{source}"
-        ));
+        if has_bg {
+            sections.push(format!(
+                "请参考上面提供的背景信息，将以下文本翻译为{zh_lang}{marker_clause_zh}，注意只需要输出翻译后的结果，不要额外解释：\n\n[原文]\n{source}"
+            ));
+        } else {
+            sections.push(format!(
+                "将以下文本翻译为{zh_lang}{marker_clause_zh}，注意只需要输出翻译后的结果，不要额外解释：\n\n{source}"
+            ));
+        }
     } else {
         let marker_clause = if has_link_markers && has_img_markers {
             ", preserving [[0|...]] and [[img0]] markers intact"
@@ -1395,9 +1477,15 @@ fn build_prompt_ext(
         } else {
             ""
         };
-        sections.push(format!(
-            "Translate the following segment into {norm_target}{marker_clause}, without additional explanation.{style_clause}\n\n{source}"
-        ));
+        if has_bg {
+            sections.push(format!(
+                "Translate the following segment into {norm_target}{marker_clause}, considering the background information, without additional explanation.{style_clause}\n\n[Source Text]\n{source}"
+            ));
+        } else {
+            sections.push(format!(
+                "Translate the following segment into {norm_target}{marker_clause}, without additional explanation.{style_clause}\n\n{source}"
+            ));
+        }
     }
 
     let user_prompt = sections.join("\n\n");
@@ -1558,6 +1646,11 @@ fn clean_translation_output(raw: &str) -> String {
         let lower = l.to_ascii_lowercase();
         if lower.starts_with("style:")
             || lower.starts_with("note:")
+            || lower.starts_with("topic:")
+            || l.starts_with("主题：")
+            || l.starts_with("主题:")
+            || l.starts_with("주제:")
+            || l.starts_with("주제：")
             || lower.starts_with("translate the following segment")
             || lower.starts_with("output only")
             || lower.starts_with("reference the following translations")
@@ -1585,6 +1678,8 @@ fn clean_translation_output(raw: &str) -> String {
             "[Background Information]",
             "[배경 정보]",
             "[背景信息]",
+            "[背景 정보]",
+            "[배경信息]",
             "[Translation]",
             "[번역 결과]",
             "[번역문]",
@@ -2791,53 +2886,7 @@ fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> 
             }
         }
 
-        let src_lower = source_text.to_ascii_lowercase();
         fix_english_billion_to_korean(source_text, &mut out);
-        if (src_lower.contains("weights") || src_lower.contains("weight"))
-            && !src_lower.contains("wells")
-            && (src_lower.contains("model")
-                || src_lower.contains("gguf")
-                || src_lower.contains("quantiz")
-                || src_lower.contains("neural")
-                || src_lower.contains("llm"))
-            && out.contains("웰스")
-        {
-            out = out.replace("웰스", "가중치");
-        }
-        if src_lower.contains("inference")
-            && (src_lower.contains("llm")
-                || src_lower.contains("mllm")
-                || src_lower.contains("neural")
-                || src_lower.contains("model")
-                || src_lower.contains("tensor")
-                || src_lower.contains("gpu"))
-        {
-            out = out
-                .replace("인퍼런싱", "추론")
-                .replace("인퍼런스", "추론")
-                .replace("인퍼페션", "추론")
-                .replace("인출 기능", "추론 기능")
-                .replace("인출 과정", "추론 과정")
-                .replace("인출을", "추론을")
-                .replace("인출이", "추론이");
-        }
-        if src_lower.contains("lactic acid") && out.contains("유산산") {
-            out = out.replace("유산산", "젖산");
-        }
-        if src_lower.contains("cyanobacteria") {
-            for bad_bio in ["시아노바이오마이크로바이오스", "시아노바이오"] {
-                if out.contains(bad_bio) {
-                    out = out.replace(bad_bio, "남세균(시아노박테리아)");
-                }
-            }
-        }
-        if src_lower.contains("pride and prejudice") {
-            out = out
-                .replace("《프라이드 앤 프리뱔지스》", "《오만과 편견》")
-                .replace("프라이드 앤 프리뱔지스", "오만과 편견");
-            out = fix_korean_particle_after_term(&out, "오만과 편견");
-        }
-
         fix_korean_code_token_particles(&mut out);
         strip_spurious_question_mark(source_text, &mut out);
         let is_dlg = is_dialogue_segment(source_text);
@@ -2889,10 +2938,198 @@ fn looks_like_prompt_echo(source_text: &str, out: &str) -> bool {
         "으로 번역하십시오",
         "로 번역하십시오",
         "do not translate",
+        "topic:",
+        "主题：",
+        "[背景 정보]",
+        "[배경 정보]",
     ];
-    ECHO_PHRASES
-        .iter()
-        .any(|phrase| out.contains(phrase) && !source_text.contains(phrase))
+    let out_lower = out.to_ascii_lowercase();
+    let src_lower = source_text.to_ascii_lowercase();
+    ECHO_PHRASES.iter().any(|phrase| {
+        let pl = phrase.to_ascii_lowercase();
+        out_lower.contains(&pl) && !src_lower.contains(&pl)
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ConfidenceSummary {
+    avg_logprob: f32,
+    min_win4_logprob: f32,
+    token_count: u32,
+}
+
+impl ConfidenceSummary {
+    fn is_low_confidence(self, source_chars: usize) -> bool {
+        source_chars >= 48
+            && self.token_count >= 12
+            && (self.avg_logprob < -0.155 || self.min_win4_logprob < -0.90)
+    }
+
+    fn quality_score(self) -> f32 {
+        self.avg_logprob + 0.25 * self.min_win4_logprob
+    }
+}
+
+#[derive(Debug, Default)]
+struct ConfidenceTracker {
+    sum_logprob: f32,
+    count: u32,
+    win4: [f32; 4],
+    min_win4: f32,
+}
+
+impl ConfidenceTracker {
+    fn new() -> Self {
+        Self {
+            sum_logprob: 0.0,
+            count: 0,
+            win4: [0.0; 4],
+            min_win4: 0.0,
+        }
+    }
+
+    fn push(&mut self, log_prob: f32) {
+        if !log_prob.is_finite() {
+            return;
+        }
+        let lp = log_prob.min(0.0);
+        self.sum_logprob += lp;
+        self.win4[(self.count as usize) % 4] = lp;
+        self.count += 1;
+        if self.count >= 4 {
+            let avg4 = self.win4.iter().sum::<f32>() * 0.25;
+            if self.count == 4 || avg4 < self.min_win4 {
+                self.min_win4 = avg4;
+            }
+        }
+    }
+
+    fn summary(&self) -> ConfidenceSummary {
+        let avg_logprob = if self.count > 0 {
+            self.sum_logprob / (self.count as f32)
+        } else {
+            0.0
+        };
+        let min_win4_logprob = if self.count >= 4 {
+            self.min_win4
+        } else {
+            avg_logprob
+        };
+        ConfidenceSummary {
+            avg_logprob,
+            min_win4_logprob,
+            token_count: self.count,
+        }
+    }
+}
+
+fn token_log_prob(logits: &[f32], chosen: LlamaToken) -> f32 {
+    let idx = chosen.0;
+    if idx < 0 || (idx as usize) >= logits.len() {
+        return 0.0;
+    }
+    let chosen_logit = logits[idx as usize];
+    if !chosen_logit.is_finite() {
+        return 0.0;
+    }
+    let mut max_logit = f32::NEG_INFINITY;
+    for &x in logits {
+        if x > max_logit {
+            max_logit = x;
+        }
+    }
+    if !max_logit.is_finite() {
+        return 0.0;
+    }
+    let mut sum_exp = 0.0f32;
+    for &x in logits {
+        let diff = x - max_logit;
+        if diff > -20.0 {
+            sum_exp += diff.exp();
+        }
+    }
+    (chosen_logit - max_logit) - sum_exp.max(1e-12).ln()
+}
+
+fn has_unexpected_script_glitch(source_text: &str, candidate: &str, norm_target: &str) -> bool {
+    if norm_target == "Korean" && !has_cjk_or_kana(source_text) {
+        let chars: Vec<char> = candidate.chars().collect();
+        for (i, &c) in chars.iter().enumerate() {
+            if ('\u{3040}'..='\u{30FF}').contains(&c) {
+                return true;
+            }
+            if ('\u{4E00}'..='\u{9FFF}').contains(&c) {
+                let adj_hangul = (i > 0 && ('\u{AC00}'..='\u{D7A3}').contains(&chars[i - 1]))
+                    || (i + 1 < chars.len() && ('\u{AC00}'..='\u{D7A3}').contains(&chars[i + 1]));
+                if adj_hangul {
+                    return true;
+                }
+            }
+        }
+    } else if norm_target == "Japanese" {
+        let chars: Vec<char> = candidate.chars().collect();
+        let mut i = 0usize;
+        while i + 3 < chars.len() {
+            if ('\u{30A0}'..='\u{30FF}').contains(&chars[i]) && chars[i + 1].is_ascii_uppercase() {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_uppercase() {
+                    j += 1;
+                }
+                if j - (i + 1) >= 2
+                    && j < chars.len()
+                    && ('\u{30A0}'..='\u{30FF}').contains(&chars[j])
+                {
+                    let slice: String = chars[i + 1..j].iter().collect();
+                    if !source_text.contains(&slice) {
+                        return true;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+    false
+}
+
+fn is_sane_retry_candidate(source_text: &str, candidate: &str, norm_target: &str) -> bool {
+    let c_trimmed = candidate.trim();
+    if c_trimmed.is_empty() || looks_like_prompt_echo(source_text, c_trimmed) {
+        return false;
+    }
+    let src_chars = source_text.trim().chars().count();
+    let cand_chars = c_trimmed.chars().count();
+    if src_chars >= 30 && (cand_chars < 4 || cand_chars > src_chars * 4) {
+        return false;
+    }
+    if norm_target != "English"
+        && src_chars >= 20
+        && source_text.trim().eq_ignore_ascii_case(c_trimmed)
+    {
+        return false;
+    }
+    true
+}
+
+fn should_prefer_retry_candidate(
+    source_text: &str,
+    norm_target: &str,
+    first: &str,
+    first_conf: ConfidenceSummary,
+    cand2: &str,
+    cand2_conf: ConfidenceSummary,
+) -> bool {
+    if !is_sane_retry_candidate(source_text, cand2, norm_target) {
+        return false;
+    }
+    let glitch1 = has_unexpected_script_glitch(source_text, first, norm_target);
+    let glitch2 = has_unexpected_script_glitch(source_text, cand2, norm_target);
+    if glitch1 && !glitch2 {
+        return true;
+    }
+    if !glitch1 && glitch2 {
+        return false;
+    }
+    cand2_conf.quality_score() > first_conf.quality_score() + 0.03
 }
 
 fn looks_untranslated(source_text: &str, out: &str, norm_target: &str) -> bool {
@@ -2936,15 +3173,30 @@ fn looks_untranslated(source_text: &str, out: &str, norm_target: &str) -> bool {
     false
 }
 
+fn build_retry_sampler(n_vocab: i32, style: &str) -> LlamaSampler {
+    if style.trim().eq_ignore_ascii_case("polished") {
+        LlamaSampler::greedy()
+    } else {
+        LlamaSampler::chain_simple([
+            LlamaSampler::penalties(n_vocab, 64, 1.06, 0.0, 0.0),
+            LlamaSampler::min_p(0.06, 1),
+            LlamaSampler::temp(0.28),
+            LlamaSampler::dist(17),
+        ])
+    }
+}
+
 fn run_completion_once(
     loaded: &LoadedModel,
     orig_source: &str,
     prompt_source: &str,
     norm_target: &str,
     style: &str,
+    page_title: Option<&str>,
     seg_glossary: &[&IosGlossaryRule],
     omit_marker_clause: bool,
-) -> Result<String, String> {
+    use_retry_sampler: bool,
+) -> Result<(String, ConfidenceSummary), String> {
     let vocab = loaded.model.vocab();
     let src_toks = vocab.tokenize(prompt_source.as_bytes(), false, false).len() as u32;
     let (prompt, uses_hy_template) = build_prompt_ext(
@@ -2952,13 +3204,14 @@ fn run_completion_once(
         prompt_source,
         norm_target,
         style,
+        page_title,
         "",
         omit_marker_clause,
     );
     let parse_special = prompt.contains("<｜hy_") || prompt.contains("<|") || prompt.contains("[|");
     let tokens = vocab.tokenize(prompt.as_bytes(), !uses_hy_template, parse_special);
     if tokens.is_empty() {
-        return Ok(orig_source.to_string());
+        return Ok((orig_source.to_string(), ConfidenceSummary::default()));
     }
 
     let max_new_tokens =
@@ -3000,7 +3253,9 @@ fn run_completion_once(
             .map_err(|e| format!("Prompt decode failed: {e}"))?;
     }
 
-    let mut sampler = if style.trim().eq_ignore_ascii_case("polished") {
+    let mut sampler = if use_retry_sampler {
+        build_retry_sampler(vocab.n_tokens(), style)
+    } else if style.trim().eq_ignore_ascii_case("polished") {
         LlamaSampler::chain_simple([
             LlamaSampler::penalties(vocab.n_tokens(), 64, 1.01, 0.0, 0.0),
             LlamaSampler::top_k(20),
@@ -3013,6 +3268,7 @@ fn run_completion_once(
     };
 
     let mut rep_guard = RepetitionGuard::new();
+    let mut conf_tracker = ConfidenceTracker::new();
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut piece_buf = Vec::<u8>::with_capacity(32);
     let mut output = String::with_capacity((prompt_source.len() * 2).min(4096));
@@ -3025,11 +3281,14 @@ fn run_completion_once(
         if CANCEL_REQUESTED.load(Ordering::Relaxed) {
             return Err("Translation cancelled".to_string());
         }
-        let token = sampler.sample(&ctx, batch.n_tokens() - 1);
+        let logit_idx = batch.n_tokens() - 1;
+        let token = sampler.sample(&ctx, logit_idx);
         sampler.accept(token);
         if vocab.is_eog(token) {
             break;
         }
+        let lp = token_log_prob(ctx.get_logits_ith(logit_idx), token);
+        conf_tracker.push(lp);
         let pre_len = output.len();
         piece_buf.clear();
         vocab.token_to_piece_into(token, &mut piece_buf, false, None);
@@ -3060,7 +3319,7 @@ fn run_completion_once(
     let _ = decoder.decode_to_string(&[], &mut output, true);
     let mut finalized = finalize_translated_unit(orig_source, norm_target, &output);
     apply_ios_glossary_post_enforce(orig_source, &mut finalized, seg_glossary);
-    Ok(finalized)
+    Ok((finalized, conf_tracker.summary()))
 }
 
 fn translate_single_unit(
@@ -3068,6 +3327,7 @@ fn translate_single_unit(
     source: &str,
     norm_target: &str,
     style: &str,
+    page_title: Option<&str>,
     all_rules: &[IosGlossaryRule],
 ) -> Result<String, String> {
     if let Some(shortcut) = shortcut_translation(source, norm_target) {
@@ -3080,24 +3340,28 @@ fn translate_single_unit(
     let preprocessed = preprocess_source_text(source, norm_target);
     let prompt_src = apply_ios_glossary_pre_substitute(&preprocessed, &seg_rules);
 
-    let first = run_completion_once(
+    let (first, first_conf) = run_completion_once(
         loaded,
         source,
         &prompt_src,
         norm_target,
         style,
+        page_title,
         &seg_rules,
+        false,
         false,
     )?;
     if looks_like_prompt_echo(source, &first) || looks_untranslated(source, &first, norm_target) {
-        let retried = run_completion_once(
+        let (retried, _) = run_completion_once(
             loaded,
             source,
             &prompt_src,
             norm_target,
             style,
+            None,
             &seg_rules,
             true,
+            false,
         )?;
         if !looks_untranslated(source, &retried, norm_target) {
             return Ok(retried);
@@ -3109,14 +3373,16 @@ fn translate_single_unit(
                 let plain_rules = filter_ios_glossary(plain_trimmed, all_rules);
                 let plain_pre = preprocess_source_text(plain_trimmed, norm_target);
                 let plain_prompt = apply_ios_glossary_pre_substitute(&plain_pre, &plain_rules);
-                if let Ok(plain_tr) = run_completion_once(
+                if let Ok((plain_tr, _)) = run_completion_once(
                     loaded,
                     plain_trimmed,
                     &plain_prompt,
                     norm_target,
                     style,
+                    None,
                     &plain_rules,
                     true,
+                    false,
                 ) {
                     if !plain_tr.trim().is_empty()
                         && !looks_like_prompt_echo(plain_trimmed, &plain_tr)
@@ -3128,6 +3394,31 @@ fn translate_single_unit(
         }
         if !retried.trim().is_empty() {
             return Ok(retried);
+        }
+    } else if first_conf.is_low_confidence(source.chars().count())
+        || has_unexpected_script_glitch(source, &first, norm_target)
+    {
+        if let Ok((cand2, cand2_conf)) = run_completion_once(
+            loaded,
+            source,
+            &prompt_src,
+            norm_target,
+            style,
+            page_title,
+            &seg_rules,
+            false,
+            true,
+        ) {
+            if should_prefer_retry_candidate(
+                source,
+                norm_target,
+                &first,
+                first_conf,
+                &cand2,
+                cand2_conf,
+            ) {
+                return Ok(cand2);
+            }
         }
     }
     Ok(first)
@@ -3147,7 +3438,7 @@ fn translate_with_model(
     if let Some(shortcut) = shortcut_translation(source, &norm_target) {
         return Ok(shortcut);
     }
-    let all_rules = parse_ios_glossary_hint(glossary_hint);
+    let (page_title, all_rules) = parse_ios_glossary_hint(glossary_hint);
     let top_rules = filter_ios_glossary(source, &all_rules);
     if let Some(gloss_shortcut) = glossary_exact_segment_shortcut(source, &top_rules) {
         return Ok(gloss_shortcut);
@@ -3168,6 +3459,7 @@ fn translate_with_model(
                     line,
                     &norm_target,
                     style,
+                    page_title.as_deref(),
                     &all_rules,
                 )?);
             }
@@ -3186,13 +3478,21 @@ fn translate_with_model(
                 &chunk,
                 &norm_target,
                 style,
+                page_title.as_deref(),
                 &all_rules,
             )?);
         }
         return Ok(join_translated_sentences(&out_parts, &norm_target));
     }
 
-    translate_single_unit(loaded, source, &norm_target, style, &all_rules)
+    translate_single_unit(
+        loaded,
+        source,
+        &norm_target,
+        style,
+        page_title.as_deref(),
+        &all_rules,
+    )
 }
 
 #[no_mangle]

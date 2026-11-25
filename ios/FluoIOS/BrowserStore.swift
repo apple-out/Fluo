@@ -1823,7 +1823,8 @@ final class BrowserStore: ObservableObject {
                             baseUrl: self.openAiBaseUrl,
                             targetLanguage: self.targetLanguage,
                             style: "polished",
-                            glossary: self.userData.glossary.filter(\.enabled)
+                            glossary: self.userData.glossary.filter(\.enabled),
+                            pageTitle: tabTitle
                         )
                         bullets.append("• \(tr.trimmingCharacters(in: .whitespacesAndNewlines))")
                     }
@@ -2035,7 +2036,8 @@ final class BrowserStore: ObservableObject {
                         baseUrl: self.openAiBaseUrl,
                         targetLanguage: self.targetLanguage,
                         style: self.userData.style.rawValue,
-                        glossary: self.userData.glossary.filter(\.enabled)
+                        glossary: self.userData.glossary.filter(\.enabled),
+                        pageTitle: self.activeTab.title
                     )
                     self.selectionTranslatedText = tr
                 } catch {
@@ -2124,6 +2126,7 @@ final class BrowserStore: ObservableObject {
         let currentGlossary = userData.glossary.filter(\.enabled)
         let currentFontScale = userData.fontScale
         let currentLineHeight = userData.lineHeight
+        let tabTitle = tab.title
         let bilingual = (tab.displayMode == .bilingual)
         let uiJson = (try? JSONEncoder().encode(uiLang.rawValue)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"ko\""
 
@@ -2136,7 +2139,8 @@ final class BrowserStore: ObservableObject {
                     baseUrl: currentBase,
                     targetLanguage: currentTarget,
                     style: currentStyle,
-                    glossary: currentGlossary
+                    glossary: currentGlossary,
+                    pageTitle: tabTitle
                 )
                 if !tab.isPrivate {
                     TranslationEngine.shared.storeCachedTranslation(tr, for: source, targetLanguage: currentTarget, style: currentStyle)
@@ -2327,7 +2331,8 @@ final class BrowserStore: ObservableObject {
                                 baseUrl: currentBase,
                                 targetLanguage: currentTarget,
                                 style: currentStyle,
-                                glossary: currentGlossary
+                                glossary: currentGlossary,
+                                pageTitle: tab.title
                             )
                             sessionTranslated[trimmedKey] = tr
                             if !tab.isPrivate {

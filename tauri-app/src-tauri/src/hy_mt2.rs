@@ -234,6 +234,7 @@ enum WorkerCommand {
         segments: Vec<SegmentInput>,
         target_lang: String,
         style: String,
+        page_title: Option<String>,
         glossary: Vec<crate::ai::GlossaryRule>,
         history: Vec<ContextPair>,
         cancel: CancellationToken,
@@ -1192,6 +1193,7 @@ impl HyMt2Engine {
 
         let target_lang = context.target_language.to_string();
         let style = context.style.to_string();
+        let page_title = context.project_name.and_then(sanitize_page_title_context);
         let glossary = context.glossary.to_vec();
         let page_key = page_url
             .map(str::trim)
@@ -1229,6 +1231,7 @@ impl HyMt2Engine {
             segments: inputs_owned,
             target_lang,
             style,
+            page_title,
             glossary,
             history: initial_history,
             cancel,
@@ -1446,6 +1449,7 @@ fn run_hy_mt2_worker(
                         segments,
                         target_lang,
                         style,
+                        page_title,
                         glossary,
                         history,
                         cancel,
@@ -1462,6 +1466,7 @@ fn run_hy_mt2_worker(
                                 segments,
                                 target_lang,
                                 style,
+                                page_title,
                                 glossary,
                                 history,
                                 cancel,
@@ -1484,6 +1489,7 @@ fn run_hy_mt2_worker(
                             &segments,
                             &target_lang,
                             &style,
+                            page_title.as_deref(),
                             &glossary,
                             history,
                             req_spec.ctx_size,
@@ -2013,6 +2019,10 @@ pub fn looks_like_prompt_echo(source_text: &str, out: &str) -> bool {
         "do NOT translate",
         "keep verbatim",
         "参考下面的翻译",
+        "topic:",
+        "主题：",
+        "[背景 정보]",
+        "[배경 정보]",
     ];
     let out_lower = out.to_ascii_lowercase();
     let src_lower = source_text.to_ascii_lowercase();
@@ -2412,6 +2422,7 @@ fn process_worker_translation_batch(
     segments: &[SegmentInput],
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     mut history: Vec<ContextPair>,
     max_ctx_size: u32,
@@ -2444,6 +2455,7 @@ fn process_worker_translation_batch(
                 &seg.text,
                 target_language,
                 style,
+                page_title,
                 glossary,
                 &mut history,
                 max_ctx_size,
@@ -2492,6 +2504,7 @@ fn process_worker_translation_batch(
                 &seg.text,
                 target_language,
                 style,
+                page_title,
                 glossary,
                 &mut history,
                 max_ctx_size,
@@ -2571,6 +2584,7 @@ fn process_worker_translation_batch(
                 &dup_refs,
                 target_language,
                 style,
+                page_title,
                 glossary,
                 max_ctx_size,
                 cancel,
@@ -2593,6 +2607,7 @@ fn process_worker_translation_batch(
                 &seg.text,
                 target_language,
                 style,
+                page_title,
                 glossary,
                 &mut history,
                 max_ctx_size,
@@ -2719,6 +2734,197 @@ fn build_sampler(model: &LlamaModel, style: &str) -> LlamaSampler {
     }
 }
 
+fn build_retry_sampler(model: &LlamaModel, style: &str) -> LlamaSampler {
+    if style.trim() == "polished" {
+        LlamaSampler::greedy()
+    } else {
+        LlamaSampler::chain_simple([
+            LlamaSampler::penalties(model.vocab().n_tokens(), 64, 1.06, 0.0, 0.0),
+            LlamaSampler::min_p(0.06, 1),
+            LlamaSampler::temp(0.28),
+            LlamaSampler::dist(17),
+        ])
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ConfidenceSummary {
+    pub avg_logprob: f32,
+    pub min_win4_logprob: f32,
+    pub token_count: u32,
+}
+
+impl ConfidenceSummary {
+    pub fn is_low_confidence(self, source_chars: usize) -> bool {
+        source_chars >= 48
+            && self.token_count >= 12
+            && (self.avg_logprob < -0.155 || self.min_win4_logprob < -0.90)
+    }
+
+    pub fn quality_score(self) -> f32 {
+        self.avg_logprob + 0.25 * self.min_win4_logprob
+    }
+}
+
+pub fn has_unexpected_script_glitch(source_text: &str, candidate: &str, norm_target: &str) -> bool {
+    if norm_target == "Korean" && !has_cjk_or_kana(source_text) {
+        let chars: Vec<char> = candidate.chars().collect();
+        for (i, &c) in chars.iter().enumerate() {
+            if ('\u{3040}'..='\u{30FF}').contains(&c) {
+                return true;
+            }
+            if ('\u{4E00}'..='\u{9FFF}').contains(&c) {
+                let adj_hangul = (i > 0 && ('\u{AC00}'..='\u{D7A3}').contains(&chars[i - 1]))
+                    || (i + 1 < chars.len() && ('\u{AC00}'..='\u{D7A3}').contains(&chars[i + 1]));
+                if adj_hangul {
+                    return true;
+                }
+            }
+        }
+    } else if norm_target == "Japanese" {
+        let chars: Vec<char> = candidate.chars().collect();
+        let mut i = 0usize;
+        while i + 3 < chars.len() {
+            if ('\u{30A0}'..='\u{30FF}').contains(&chars[i]) && chars[i + 1].is_ascii_uppercase() {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_uppercase() {
+                    j += 1;
+                }
+                if j - (i + 1) >= 2 && j < chars.len() && ('\u{30A0}'..='\u{30FF}').contains(&chars[j]) {
+                    let slice: String = chars[i + 1..j].iter().collect();
+                    if !source_text.contains(&slice) {
+                        return true;
+                    }
+                }
+            }
+            i += 1;
+        }
+    }
+    false
+}
+
+fn should_prefer_retry_candidate(
+    source_text: &str,
+    norm_target: &str,
+    first: &str,
+    first_conf: ConfidenceSummary,
+    cand2: &str,
+    cand2_conf: ConfidenceSummary,
+) -> bool {
+    if !is_sane_retry_candidate(source_text, cand2, norm_target) {
+        return false;
+    }
+    let glitch1 = has_unexpected_script_glitch(source_text, first, norm_target);
+    let glitch2 = has_unexpected_script_glitch(source_text, cand2, norm_target);
+    if glitch1 && !glitch2 {
+        return true;
+    }
+    if !glitch1 && glitch2 {
+        return false;
+    }
+    cand2_conf.quality_score() > first_conf.quality_score() + 0.03
+}
+
+#[derive(Debug, Default)]
+pub struct ConfidenceTracker {
+    sum_logprob: f32,
+    count: u32,
+    win4: [f32; 4],
+    min_win4: f32,
+}
+
+impl ConfidenceTracker {
+    pub fn new() -> Self {
+        Self {
+            sum_logprob: 0.0,
+            count: 0,
+            win4: [0.0; 4],
+            min_win4: 0.0,
+        }
+    }
+
+    pub fn push(&mut self, log_prob: f32) {
+        if !log_prob.is_finite() {
+            return;
+        }
+        let lp = log_prob.min(0.0);
+        self.sum_logprob += lp;
+        self.win4[(self.count as usize) % 4] = lp;
+        self.count += 1;
+        if self.count >= 4 {
+            let avg4 = self.win4.iter().sum::<f32>() * 0.25;
+            if self.count == 4 || avg4 < self.min_win4 {
+                self.min_win4 = avg4;
+            }
+        }
+    }
+
+    pub fn summary(&self) -> ConfidenceSummary {
+        let avg_logprob = if self.count > 0 {
+            self.sum_logprob / (self.count as f32)
+        } else {
+            0.0
+        };
+        let min_win4_logprob = if self.count >= 4 {
+            self.min_win4
+        } else {
+            avg_logprob
+        };
+        ConfidenceSummary {
+            avg_logprob,
+            min_win4_logprob,
+            token_count: self.count,
+        }
+    }
+}
+
+pub fn token_log_prob(logits: &[f32], chosen: llama_cpp_2::token::LlamaToken) -> f32 {
+    let idx = chosen.0;
+    if idx < 0 || (idx as usize) >= logits.len() {
+        return 0.0;
+    }
+    let chosen_logit = logits[idx as usize];
+    if !chosen_logit.is_finite() {
+        return 0.0;
+    }
+    let mut max_logit = f32::NEG_INFINITY;
+    for &x in logits {
+        if x > max_logit {
+            max_logit = x;
+        }
+    }
+    if !max_logit.is_finite() {
+        return 0.0;
+    }
+    let mut sum_exp = 0.0f32;
+    for &x in logits {
+        let diff = x - max_logit;
+        if diff > -20.0 {
+            sum_exp += diff.exp();
+        }
+    }
+    (chosen_logit - max_logit) - sum_exp.max(1e-12).ln()
+}
+
+fn is_sane_retry_candidate(source_text: &str, candidate: &str, norm_target: &str) -> bool {
+    let c_trimmed = candidate.trim();
+    if c_trimmed.is_empty() || looks_like_prompt_echo(source_text, c_trimmed) {
+        return false;
+    }
+    let src_chars = source_text.trim().chars().count();
+    let cand_chars = c_trimmed.chars().count();
+    if src_chars >= 30 && (cand_chars < 4 || cand_chars > src_chars * 4) {
+        return false;
+    }
+    if norm_target != "English"
+        && src_chars >= 20
+        && source_text.trim().eq_ignore_ascii_case(c_trimmed)
+    {
+        return false;
+    }
+    true
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prepare_prompt_tokens(
     model: &LlamaModel,
@@ -2727,6 +2933,7 @@ fn prepare_prompt_tokens(
     normalized_source: &str,
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
     omit_marker_clause: bool,
@@ -2738,20 +2945,22 @@ fn prepare_prompt_tokens(
     let (system_prompt, user_prompt) = if uses_hy_template {
         (
             None,
-            format_single_prompt_ext(
+            format_single_prompt_ext_with_topic(
                 normalized_source,
                 target_language,
                 style,
+                page_title,
                 glossary,
                 history,
                 omit_marker_clause,
             ),
         )
     } else {
-        let (sys, usr) = format_instruct_prompt_pair(
+        let (sys, usr) = format_instruct_prompt_pair_with_topic(
             normalized_source,
             target_language,
             style,
+            page_title,
             glossary,
             history,
         );
@@ -2839,6 +3048,7 @@ struct ActiveBatchSlot {
     output: String,
     decoder: encoding_rs::Decoder,
     rep_guard: RepetitionGuard,
+    conf: ConfidenceTracker,
     sampler: LlamaSampler,
 }
 
@@ -2899,6 +3109,7 @@ fn translate_parallel_batch(
     duplicates_for_slot: &[Vec<&SegmentInput>],
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     max_ctx_size: u32,
     cancel: &CancellationToken,
@@ -2965,6 +3176,7 @@ fn translate_parallel_batch(
                 &normalized,
                 target_language,
                 style,
+                page_title,
                 &[],
                 &[],
                 false,
@@ -3078,6 +3290,7 @@ fn translate_parallel_batch(
     let mut active_reserved_kv = 0usize;
     let mut piece_buf = Vec::<u8>::with_capacity(32);
     let mut retry_bare: Vec<(usize, usize, String)> = Vec::new();
+    let mut retry_low_conf: Vec<(usize, usize, String, String, ConfidenceSummary)> = Vec::new();
 
     loop {
         if cancel.is_cancelled() {
@@ -3178,6 +3391,7 @@ fn translate_parallel_batch(
                 output: String::with_capacity(init_cap),
                 decoder: encoding_rs::UTF_8.new_decoder(),
                 rep_guard: RepetitionGuard::new(),
+                conf: ConfidenceTracker::new(),
                 sampler: build_sampler(model, style),
             });
         }
@@ -3250,6 +3464,8 @@ fn translate_parallel_batch(
                 if vocab.is_eog(token) {
                     finished = true;
                 } else {
+                    let lp = token_log_prob(session.ctx.get_logits_ith(batch_idx), token);
+                    slot.conf.push(lp);
                     let pre_len = slot.output.len();
                     piece_buf.clear();
                     vocab.token_to_piece_into(token, &mut piece_buf, false, None);
@@ -3291,8 +3507,19 @@ fn translate_parallel_batch(
                     &[],
                 );
                 apply_glossary_post_enforce(&done.source_text, &mut final_text, &done.seg_glossary);
+                let conf_summary = done.conf.summary();
                 if looks_like_prompt_echo(&done.source_text, &final_text) {
                     retry_bare.push((done.parent_idx, done.part_idx, done.source_text));
+                } else if conf_summary.is_low_confidence(done.source_text.chars().count())
+                    || has_unexpected_script_glitch(&done.source_text, &final_text, &norm_target)
+                {
+                    retry_low_conf.push((
+                        done.parent_idx,
+                        done.part_idx,
+                        done.source_text,
+                        final_text,
+                        conf_summary,
+                    ));
                 } else {
                     part_outputs[done.parent_idx][done.part_idx] = Some(final_text);
                     part_remaining[done.parent_idx] =
@@ -3316,7 +3543,7 @@ fn translate_parallel_batch(
         if cancel.is_cancelled() {
             return Err("번역을 취소했습니다.".into());
         }
-        let retried = translate_single_unit_ext(
+        let (retried, _, _) = translate_single_unit_ext_with_metrics(
             session,
             model,
             uses_hy_template,
@@ -3324,13 +3551,61 @@ fn translate_parallel_batch(
             &part_src,
             target_language,
             style,
+            None,
             glossary,
             &[],
             max_ctx_size,
             cancel,
             true,
+            false,
         )?;
         part_outputs[parent_idx][part_idx] = Some(retried);
+        part_remaining[parent_idx] = part_remaining[parent_idx].saturating_sub(1);
+        if part_remaining[parent_idx] == 0 {
+            let parts_done: Vec<String> = part_outputs[parent_idx]
+                .iter()
+                .map(|p| p.clone().unwrap_or_default())
+                .collect();
+            let joined = join_translated_sentences(&parts_done, &norm_target);
+            emit_result(parent_idx, joined, false, &mut results);
+        }
+    }
+
+    for (parent_idx, part_idx, part_src, first_text, first_conf) in retry_low_conf {
+        if cancel.is_cancelled() {
+            return Err("번역을 취소했습니다.".into());
+        }
+        let chosen = match translate_single_unit_ext_with_metrics(
+            session,
+            model,
+            uses_hy_template,
+            chat_template,
+            &part_src,
+            target_language,
+            style,
+            page_title,
+            glossary,
+            &[],
+            max_ctx_size,
+            cancel,
+            false,
+            true,
+        ) {
+            Ok((cand2, cand2_conf, _))
+                if should_prefer_retry_candidate(
+                    &part_src,
+                    &norm_target,
+                    &first_text,
+                    first_conf,
+                    &cand2,
+                    cand2_conf,
+                ) =>
+            {
+                cand2
+            }
+            _ => first_text,
+        };
+        part_outputs[parent_idx][part_idx] = Some(chosen);
         part_remaining[parent_idx] = part_remaining[parent_idx].saturating_sub(1);
         if part_remaining[parent_idx] == 0 {
             let parts_done: Vec<String> = part_outputs[parent_idx]
@@ -3357,16 +3632,49 @@ fn translate_segment_sequential(
     source_text: &str,
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     history: &mut Vec<ContextPair>,
     max_ctx_size: u32,
     cancel: &CancellationToken,
 ) -> Result<String, String> {
+    let (out, _, _) = translate_segment_sequential_with_metrics(
+        session,
+        model,
+        uses_hy_template,
+        chat_template,
+        source_text,
+        target_language,
+        style,
+        page_title,
+        glossary,
+        history,
+        max_ctx_size,
+        cancel,
+    )?;
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn translate_segment_sequential_with_metrics(
+    session: &mut HyMt2Session<'_>,
+    model: &LlamaModel,
+    uses_hy_template: bool,
+    chat_template: Option<&LlamaChatTemplate>,
+    source_text: &str,
+    target_language: &str,
+    style: &str,
+    page_title: Option<&str>,
+    glossary: &[crate::ai::GlossaryRule],
+    history: &mut Vec<ContextPair>,
+    max_ctx_size: u32,
+    cancel: &CancellationToken,
+) -> Result<(String, ConfidenceSummary, bool), String> {
     if cancel.is_cancelled() {
         return Err("번역을 취소했습니다.".into());
     }
     if let Some(shortcut) = shortcut_translation(source_text, target_language) {
-        return Ok(shortcut);
+        return Ok((shortcut, ConfidenceSummary::default(), false));
     }
 
     // Large multi-line blocks (e.g. a whole light-novel <div> joined with <br>) lose coherence
@@ -3374,6 +3682,10 @@ fn translate_segment_sequential(
     if segment_needs_line_split(source_text) {
         let lines: Vec<&str> = source_text.lines().collect();
         let mut translated_lines = Vec::with_capacity(lines.len());
+        let mut sum_lp = 0.0f32;
+        let mut sum_min4 = 0.0f32;
+        let mut total_toks = 0u32;
+        let mut any_retried = false;
         for line in lines {
             if cancel.is_cancelled() {
                 return Err("번역을 취소했습니다.".into());
@@ -3382,7 +3694,9 @@ fn translate_segment_sequential(
                 translated_lines.push(shortcut);
                 continue;
             }
-            let out_line = translate_single_unit(
+            let is_bullet_line = split_list_bullet_prefix(line).is_some();
+            let line_history: &[ContextPair] = if is_bullet_line { &[] } else { history };
+            let (out_line, line_conf, line_retried) = translate_single_unit_with_metrics(
                 session,
                 model,
                 uses_hy_template,
@@ -3390,18 +3704,38 @@ fn translate_segment_sequential(
                 line,
                 target_language,
                 style,
+                page_title,
                 glossary,
-                history,
+                line_history,
                 max_ctx_size,
                 cancel,
             )?;
-            push_history_pair(history, line, &out_line);
+            if line_conf.token_count > 0 {
+                sum_lp += line_conf.avg_logprob * (line_conf.token_count as f32);
+                if total_toks == 0 || line_conf.min_win4_logprob < sum_min4 {
+                    sum_min4 = line_conf.min_win4_logprob;
+                }
+                total_toks += line_conf.token_count;
+            }
+            any_retried |= line_retried;
+            if !is_bullet_line {
+                push_history_pair(history, line, &out_line);
+            }
             translated_lines.push(out_line);
         }
-        return Ok(translated_lines.join("\n"));
+        let agg = ConfidenceSummary {
+            avg_logprob: if total_toks > 0 {
+                sum_lp / (total_toks as f32)
+            } else {
+                0.0
+            },
+            min_win4_logprob: sum_min4,
+            token_count: total_toks,
+        };
+        return Ok((translated_lines.join("\n"), agg, any_retried));
     }
 
-    let translated = translate_single_unit(
+    let (translated, conf, retried) = translate_single_unit_with_metrics(
         session,
         model,
         uses_hy_template,
@@ -3409,17 +3743,18 @@ fn translate_segment_sequential(
         source_text,
         target_language,
         style,
+        page_title,
         glossary,
         history,
         max_ctx_size,
         cancel,
     )?;
     push_history_pair(history, source_text, &translated);
-    Ok(translated)
+    Ok((translated, conf, retried))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn translate_single_unit(
+fn translate_single_unit_with_metrics(
     session: &mut HyMt2Session<'_>,
     model: &LlamaModel,
     uses_hy_template: bool,
@@ -3427,12 +3762,13 @@ fn translate_single_unit(
     source_text: &str,
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
     max_ctx_size: u32,
     cancel: &CancellationToken,
-) -> Result<String, String> {
-    let first = translate_single_unit_ext(
+) -> Result<(String, ConfidenceSummary, bool), String> {
+    let (first, first_conf, _) = translate_single_unit_ext_with_metrics(
         session,
         model,
         uses_hy_template,
@@ -3440,14 +3776,16 @@ fn translate_single_unit(
         source_text,
         target_language,
         style,
+        page_title,
         glossary,
         history,
         max_ctx_size,
         cancel,
         false,
+        false,
     )?;
     if looks_like_prompt_echo(source_text, &first) {
-        return translate_single_unit_ext(
+        let (retried, ret_conf, _) = translate_single_unit_ext_with_metrics(
             session,
             model,
             uses_hy_template,
@@ -3455,18 +3793,52 @@ fn translate_single_unit(
             source_text,
             target_language,
             style,
+            None,
             glossary,
             history,
             max_ctx_size,
             cancel,
             true,
-        );
+            false,
+        )?;
+        return Ok((retried, ret_conf, true));
     }
-    Ok(first)
+    let norm_target = normalize_target_language_for_hy_mt2(target_language);
+    if first_conf.is_low_confidence(source_text.chars().count())
+        || has_unexpected_script_glitch(source_text, &first, &norm_target)
+    {
+        if let Ok((cand2, cand2_conf, _)) = translate_single_unit_ext_with_metrics(
+            session,
+            model,
+            uses_hy_template,
+            chat_template,
+            source_text,
+            target_language,
+            style,
+            page_title,
+            glossary,
+            history,
+            max_ctx_size,
+            cancel,
+            false,
+            true,
+        ) && should_prefer_retry_candidate(
+            source_text,
+            &norm_target,
+            &first,
+            first_conf,
+            &cand2,
+            cand2_conf,
+        ) {
+            return Ok((cand2, cand2_conf, true));
+        }
+        return Ok((first, first_conf, true));
+    }
+    Ok((first, first_conf, false))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn translate_single_unit_ext(
+fn translate_single_unit_ext_with_metrics(
     session: &mut HyMt2Session<'_>,
     model: &LlamaModel,
     uses_hy_template: bool,
@@ -3474,17 +3846,19 @@ fn translate_single_unit_ext(
     source_text: &str,
     target_language: &str,
     style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
     max_ctx_size: u32,
     cancel: &CancellationToken,
     omit_marker_clause: bool,
-) -> Result<String, String> {
+    use_retry_sampler: bool,
+) -> Result<(String, ConfidenceSummary, bool), String> {
     let seg_glossary = filter_segment_glossary(source_text, glossary);
     if let Some(shortcut) = glossary_exact_segment_shortcut(source_text, &seg_glossary)
         .or_else(|| shortcut_translation(source_text, target_language))
     {
-        return Ok(shortcut);
+        return Ok((shortcut, ConfidenceSummary::default(), false));
     }
     let norm_target = normalize_target_language_for_hy_mt2(target_language);
     let preprocessed = preprocess_source_text(source_text, &norm_target, style);
@@ -3496,12 +3870,13 @@ fn translate_single_unit_ext(
         &normalized_source,
         target_language,
         style,
+        page_title,
         &[],
         history,
         omit_marker_clause,
     );
     if tokens.is_empty() {
-        return Ok(String::new());
+        return Ok((String::new(), ConfidenceSummary::default(), false));
     }
     let max_gen = estimate_max_output_tokens_for_prompt(
         src_toks,
@@ -3509,7 +3884,7 @@ fn translate_single_unit_ext(
         &norm_target,
         max_ctx_size,
     );
-    let raw = run_completion(
+    let (raw, conf) = run_completion_with_metrics(
         session,
         model,
         tokens,
@@ -3518,6 +3893,7 @@ fn translate_single_unit_ext(
         max_gen,
         source_text.len(),
         cancel,
+        use_retry_sampler,
     )?;
     let mut out = finalize_translated_unit(
         source_text,
@@ -3527,11 +3903,11 @@ fn translate_single_unit_ext(
         history,
     );
     apply_glossary_post_enforce(source_text, &mut out, &seg_glossary);
-    Ok(out)
+    Ok((out, conf, false))
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_completion(
+fn run_completion_with_metrics(
     session: &mut HyMt2Session<'_>,
     model: &LlamaModel,
     tokens: Vec<llama_cpp_2::token::LlamaToken>,
@@ -3540,12 +3916,13 @@ fn run_completion(
     max_new_tokens: u32,
     source_byte_len: usize,
     cancel: &CancellationToken,
-) -> Result<String, String> {
+    use_retry_sampler: bool,
+) -> Result<(String, ConfidenceSummary), String> {
     if cancel.is_cancelled() {
         return Err("번역을 취소했습니다.".into());
     }
     if tokens.is_empty() {
-        return Ok(String::new());
+        return Ok((String::new(), ConfidenceSummary::default()));
     }
     let vocab = model.vocab();
 
@@ -3598,8 +3975,13 @@ fn run_completion(
             .map_err(|e| format!("프롬프트 디코딩 오류: {e}"))?;
     }
 
-    let mut sampler = build_sampler(model, style);
+    let mut sampler = if use_retry_sampler {
+        build_retry_sampler(model, style)
+    } else {
+        build_sampler(model, style)
+    };
     let mut rep_guard = RepetitionGuard::new();
+    let mut conf_tracker = ConfidenceTracker::new();
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut piece_buf = Vec::<u8>::with_capacity(32);
     let mut output = String::with_capacity((source_byte_len * 2).min(8192));
@@ -3612,11 +3994,14 @@ fn run_completion(
         if cancel.is_cancelled() {
             return Err("번역을 취소했습니다.".into());
         }
-        let token = sampler.sample(&session.ctx, batch.n_tokens() - 1);
+        let logit_idx = batch.n_tokens() - 1;
+        let token = sampler.sample(&session.ctx, logit_idx);
         sampler.accept(token);
         if vocab.is_eog(token) {
             break;
         }
+        let lp = token_log_prob(session.ctx.get_logits_ith(logit_idx), token);
+        conf_tracker.push(lp);
         let pre_len = output.len();
         piece_buf.clear();
         vocab.token_to_piece_into(token, &mut piece_buf, false, None);
@@ -3648,7 +4033,7 @@ fn run_completion(
 
     let _ = decoder.decode_to_string(&[], &mut output, true);
     session.cached_seq0_tokens = tokens;
-    Ok(output)
+    Ok((output, conf_tracker.summary()))
 }
 
 #[allow(dead_code)]
@@ -4068,7 +4453,11 @@ pub fn select_background_pairs(source_text: &str, history: &[ContextPair]) -> Ve
         }
         let prev_trimmed = history[idx].source.trim();
         let src_trimmed_cur = source_text.trim();
-        if !cur_is_dlg && (prev_trimmed.contains(';') || prev_trimmed == src_trimmed_cur) {
+        if !cur_is_dlg
+            && (prev_trimmed.contains(';')
+                || prev_trimmed == src_trimmed_cur
+                || split_list_bullet_prefix(prev_trimmed).is_some())
+        {
             continue;
         }
         if cur_is_dlg && is_dialogue_segment(&history[idx].source) {
@@ -4148,10 +4537,81 @@ fn builtin_ja_ko_novel_hints(
     Vec::new()
 }
 
+pub fn sanitize_page_title_context(title: &str) -> Option<String> {
+    let mut collapsed = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    let trimmed = collapsed.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("tb://") {
+        return None;
+    }
+    for suffix in [
+        " - Wikipedia",
+        " — Wikipedia",
+        " - Wikipédia",
+        " — Wikipédia",
+        " - 위키백과",
+        " - 维基百科",
+        " - 維基百科",
+        " - GitHub",
+        " — GitHub",
+        " | GitHub",
+        " | MDN",
+        " - MDN",
+        " - YouTube",
+        " - Google Search",
+        " - Google 검색",
+    ] {
+        if let Some(stripped) = collapsed.strip_suffix(suffix) {
+            let s = stripped.trim();
+            if s.chars().count() >= 2 {
+                collapsed = s.to_string();
+            }
+        }
+    }
+    let clean = collapsed.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    let clean_lower = clean.to_ascii_lowercase();
+    if matches!(
+        clean_lower.as_str(),
+        "fluo" | "new tab" | "새 탭" | "untitled" | "blank" | "start" | "home" | "about:blank"
+    ) {
+        return None;
+    }
+    let clipped: String = clean.chars().take(80).collect();
+    let has_word_char = clipped
+        .chars()
+        .any(|c| c.is_alphabetic());
+    has_word_char.then(|| clipped.trim().to_string())
+}
+
+#[allow(dead_code)]
 pub fn format_instruct_prompt_pair(
     source_text: &str,
     target_language: &str,
     style: &str,
+    glossary: &[crate::ai::GlossaryRule],
+    history: &[ContextPair],
+) -> (String, String) {
+    format_instruct_prompt_pair_with_topic(
+        source_text,
+        target_language,
+        style,
+        None,
+        glossary,
+        history,
+    )
+}
+
+pub fn format_instruct_prompt_pair_with_topic(
+    source_text: &str,
+    target_language: &str,
+    style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     _history: &[ContextPair],
 ) -> (String, String) {
@@ -4220,16 +4680,24 @@ pub fn format_instruct_prompt_pair(
         }
     }
 
-    let user_prompt = if term_pairs.is_empty() {
-        format!("Translate into {lang}:\n{source_text}")
-    } else {
-        format!(
-            "Glossary ({}):\nTranslate into {lang}:\n{source_text}",
-            term_pairs.join(", ")
-        )
-    };
+    let clean_topic = page_title.and_then(sanitize_page_title_context).filter(|t| {
+        !is_dialogue
+            && source_text.chars().count() >= 24
+            && !source_text
+                .to_ascii_lowercase()
+                .contains(&t.to_ascii_lowercase())
+    });
 
-    (system_prompt, user_prompt)
+    let mut prompt_sections = Vec::new();
+    if let Some(topic) = clean_topic {
+        prompt_sections.push(format!("Topic: {topic}"));
+    }
+    if !term_pairs.is_empty() {
+        prompt_sections.push(format!("Glossary ({}):", term_pairs.join(", ")));
+    }
+    prompt_sections.push(format!("Translate into {lang}:\n{source_text}"));
+
+    (system_prompt, prompt_sections.join("\n"))
 }
 
 #[allow(dead_code)]
@@ -4240,20 +4708,42 @@ pub fn format_single_prompt(
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
 ) -> String {
-    format_single_prompt_ext(
+    format_single_prompt_ext_with_topic(
         source_text,
         target_language,
         style,
+        None,
         glossary,
         history,
         false,
     )
 }
 
+#[allow(dead_code)]
 pub fn format_single_prompt_ext(
     source_text: &str,
     target_language: &str,
     style: &str,
+    glossary: &[crate::ai::GlossaryRule],
+    history: &[ContextPair],
+    omit_marker_clause: bool,
+) -> String {
+    format_single_prompt_ext_with_topic(
+        source_text,
+        target_language,
+        style,
+        None,
+        glossary,
+        history,
+        omit_marker_clause,
+    )
+}
+
+pub fn format_single_prompt_ext_with_topic(
+    source_text: &str,
+    target_language: &str,
+    style: &str,
+    page_title: Option<&str>,
     glossary: &[crate::ai::GlossaryRule],
     history: &[ContextPair],
     omit_marker_clause: bool,
@@ -4301,8 +4791,24 @@ pub fn format_single_prompt_ext(
         parts.push(ref_lines.join("\n"));
     }
 
+    let clean_topic = page_title.and_then(sanitize_page_title_context).filter(|t| {
+        !is_dialogue
+            && source_text.chars().count() >= 24
+            && !source_text
+                .to_ascii_lowercase()
+                .contains(&t.to_ascii_lowercase())
+    });
+    let mut bg_blocks = Vec::new();
+    if let Some(ref topic) = clean_topic {
+        if use_zh_template {
+            bg_blocks.push(format!("主题：{topic}"));
+        } else {
+            bg_blocks.push(format!("Topic: {topic}"));
+        }
+    }
     let bg_lines = select_background_pairs(source_text, history);
-    let has_bg = !bg_lines.is_empty();
+    bg_blocks.extend(bg_lines);
+    let has_bg = !bg_blocks.is_empty();
     if has_bg {
         parts.push(format!(
             "{}\n{}",
@@ -4311,7 +4817,7 @@ pub fn format_single_prompt_ext(
             } else {
                 "[Background Information]"
             },
-            bg_lines.join("\n")
+            bg_blocks.join("\n")
         ));
     }
 
@@ -4722,6 +5228,11 @@ pub fn clean_hy_mt2_output(raw: &str) -> String {
         let lower = l.to_ascii_lowercase();
         if lower.starts_with("style:")
             || lower.starts_with("note:")
+            || lower.starts_with("topic:")
+            || l.starts_with("主题：")
+            || l.starts_with("主题:")
+            || l.starts_with("주제:")
+            || l.starts_with("주제：")
             || lower.starts_with("translate the following segment")
             || lower.starts_with("output only")
             || lower.starts_with("reference the following translations")
@@ -4749,6 +5260,8 @@ pub fn clean_hy_mt2_output(raw: &str) -> String {
             "[Background Information]",
             "[배경 정보]",
             "[背景信息]",
+            "[背景 정보]",
+            "[배경信息]",
             "[Translation]",
             "[번역 결과]",
             "[번역문]",
@@ -5745,7 +6258,6 @@ pub fn postprocess_translation_output(
 ) -> String {
     let norm_target = normalize_target_language_for_hy_mt2(target_language);
     let src_trimmed = source_text.trim();
-    let src_lower = src_trimmed.to_ascii_lowercase();
 
     // Pre-repair markers and hallucinated URLs so Korean narration & particle rules see clean `]]` closers.
     strip_hallucinated_marker_urls(source_text, &mut out);
@@ -5788,53 +6300,8 @@ pub fn postprocess_translation_output(
             out = format!("‘{inner}’");
         }
 
-        // General multi-genre Korean accuracy refinements (CS/AI, Science/Bio, Culinary, Literature, Numeracy)
+        // General numeracy and morphological normalization
         fix_english_billion_to_korean(source_text, &mut out);
-        if (src_lower.contains("weights") || src_lower.contains("weight"))
-            && !src_lower.contains("wells")
-            && (src_lower.contains("model")
-                || src_lower.contains("gguf")
-                || src_lower.contains("quantiz")
-                || src_lower.contains("neural")
-                || src_lower.contains("llm"))
-            && out.contains("웰스")
-        {
-            out = out.replace("웰스", "가중치");
-        }
-        if src_lower.contains("inference")
-            && (src_lower.contains("llm")
-                || src_lower.contains("mllm")
-                || src_lower.contains("neural")
-                || src_lower.contains("model")
-                || src_lower.contains("tensor")
-                || src_lower.contains("gpu"))
-        {
-            out = out
-                .replace("인퍼런싱", "추론")
-                .replace("인퍼런스", "추론")
-                .replace("인퍼페션", "추론")
-                .replace("인출 기능", "추론 기능")
-                .replace("인출 과정", "추론 과정")
-                .replace("인출을", "추론을")
-                .replace("인출이", "추론이");
-        }
-        if src_lower.contains("lactic acid") && out.contains("유산산") {
-            out = out.replace("유산산", "젖산");
-        }
-        if src_lower.contains("cyanobacteria") {
-            for bad_bio in ["시아노바이오마이크로바이오스", "시아노바이오"] {
-                if out.contains(bad_bio) {
-                    out = out.replace(bad_bio, "남세균(시아노박테리아)");
-                }
-            }
-        }
-        if src_lower.contains("pride and prejudice") {
-            out = out
-                .replace("《프라이드 앤 프리뱔지스》", "《오만과 편견》")
-                .replace("프라이드 앤 프리뱔지스", "오만과 편견");
-            out = fix_korean_particle_after_term(&out, "오만과 편견");
-        }
-
         fix_korean_code_token_particles(&mut out);
 
         let is_dialogue = is_dialogue_segment(source_text);
@@ -5846,82 +6313,6 @@ pub fn postprocess_translation_output(
             }
         } else {
             normalize_korean_narration_endings(&mut out);
-        }
-
-        // Universal wiki section & label disambiguation (KO only)
-        if source_text.contains("文書をご注意ください")
-            || source_text.contains("文書をご参照ください")
-        {
-            for (bad_doc, good_doc) in [
-                ("문서를 주의하십시오", "문서를 참고하십시오"),
-                ("문서를 주의하세요", "문서를 참고하십시오"),
-                ("문서를 주의해 주세요", "문서를 참고하십시오"),
-                ("문서를 주의해주세요", "문서를 참고하십시오"),
-                ("문서를 확인해 주세요", "문서를 참고하십시오"),
-            ] {
-                if out.contains(bad_doc) {
-                    out = out.replace(bad_doc, good_doc);
-                }
-            }
-        }
-        if (src_trimmed.ends_with(". outline") || src_trimmed.eq_ignore_ascii_case("outline"))
-            && (out.contains("윤곽") || out.contains("아웃라인") || out.contains("외곽선"))
-        {
-            out = out
-                .replace("윤곽", "개요")
-                .replace("아웃라인", "개요")
-                .replace("외곽선", "개요");
-        }
-        if (src_trimmed.ends_with(". characteristic")
-            || src_trimmed.eq_ignore_ascii_case("characteristic"))
-            && out.contains("특성")
-        {
-            out = out.replace("특성", "특징");
-        }
-        if src_trimmed.ends_with(". extended edition") && out.contains("연장판") {
-            out = out.replace("연장판", "확장판");
-        }
-        if src_lower.contains("koreanization") && out.contains("한국화") {
-            out = out.replace("한국화", "한국어화");
-        }
-        if src_lower.starts_with("circulation ") && out.starts_with("순환 ") {
-            out = out.replacen("순환 ", "유통 ", 1);
-        }
-        if out.contains("퍼스트퍼스먼트 슈터")
-            || out.contains("퍼스트퍼스너 슈터")
-            || out.contains("퍼스트퍼슨 슈터")
-        {
-            out = out
-                .replace("퍼스트퍼스먼트 슈터", "1인칭 슈팅 게임")
-                .replace("퍼스트퍼스너 슈터", "1인칭 슈팅 게임")
-                .replace("퍼스트퍼슨 슈터", "1인칭 슈팅 게임");
-        }
-        if src_lower.contains("game of the year") {
-            out = out
-                .replace("‘게임 오브 더 이어즈’", "‘올해의 게임’")
-                .replace("‘게임 오브 더 이어’", "‘올해의 게임’")
-                .replace("게임 오브 더 이어즈", "올해의 게임")
-                .replace("게임 오브 더 이어", "올해의 게임");
-        }
-        if out.contains("1인칭 슈팅 게임]] 게임") || out.contains("1인칭 슈팅 게임 게임")
-        {
-            out = out
-                .replace("1인칭 슈팅 게임]] 게임", "1인칭 슈팅 게임]]")
-                .replace("1인칭 슈팅 게임 게임", "1인칭 슈팅 게임");
-        }
-        if src_lower.contains("science fiction")
-            && src_lower.contains("shooter")
-            && (out.contains("과학소설") || out.contains("과학 소설"))
-        {
-            out = out.replace("과학소설", "SF").replace("과학 소설", "SF");
-        }
-        if src_lower.contains("single-player") && out.contains("Single-player]]") {
-            out = out.replace("Single-player]]", "싱글플레이어]]");
-        }
-        if out.contains("엔진]]를") || out.contains("engine]]를") {
-            out = out
-                .replace("엔진]]를", "엔진]]을")
-                .replace("engine]]를", "engine]]을");
         }
     }
 
@@ -6971,36 +7362,16 @@ mod tests {
             "このライブラリは[[0|Rust core]]を使用しており、[[1|GPUエンジン]]が含まれています。"
         );
 
-        // 4. Korean narration passive `-됩니다` / formal `-줍니다` normalization & scientific/AI post-fixes
+        // 4. Korean narration passive `-됩니다` / formal `-줍니다` normalization (morphological, non-dictionary)
         let ai_lead = postprocess_translation_output(
-            "The model optimizes LLM inference and shows strong efficiency.",
+            "The model optimizes attention efficiency and shows strong efficiency.",
             "한국어",
             "polished",
-            "모델은 LLM 인출 기능을 최적화하며 높은 효율을 보여줍니다.".into(),
+            "모델은 어텐션 효율을 최적화하며 높은 효율을 보여줍니다.".into(),
         );
         assert_eq!(
             ai_lead,
-            "모델은 LLM 추론 기능을 최적화하며 높은 효율을 보여준다."
-        );
-
-        assert_eq!(
-            postprocess_translation_output(
-                "Fermentation produces lactic acid.",
-                "한국어",
-                "natural",
-                "발효 과정에서 유산산이 생성됩니다.".into(),
-            ),
-            "발효 과정에서 젖산이 생성된다."
-        );
-
-        assert_eq!(
-            postprocess_translation_output(
-                "Pride and Prejudice is a classic novel.",
-                "한국어",
-                "novel",
-                "《프라이드 앤 프리뱔지스》는 고전 소설입니다.".into(),
-            ),
-            "《오만과 편견》은 고전 소설이다."
+            "모델은 어텐션 효율을 최적화하며 높은 효율을 보여준다."
         );
 
         // 5. Repaired CJK bracket `》`/`】` before `입니다` + negative `~않습니다`
@@ -7303,11 +7674,7 @@ mod tests {
         assert!(!is_dialogue_segment(mixed_book));
         assert!(segment_needs_line_split(mixed_book));
 
-        // 7. Generic outline/docs refinements & non-translatable checks
-        assert_eq!(
-            postprocess_translation_output("1. outline", "한국어", "natural", "1. 윤곽".into()),
-            "1. 개요"
-        );
+        // 7. Inline marker URL cleanup & non-translatable checks
         assert_eq!(
             postprocess_translation_output(
                 "Use [[0|rustup]] to download Rust.",
@@ -7700,5 +8067,111 @@ mod tests {
             resolve_optimal_gpu_layers(&settings, &cpu_only_hw, 1_133_080_448),
             (0, "cpu(native)".to_string())
         );
+    }
+
+    #[test]
+    fn option1_page_context_and_confidence_scoring_work() {
+        assert_eq!(
+            sanitize_page_title_context("Transformer (deep learning) - Wikipedia").as_deref(),
+            Some("Transformer (deep learning)")
+        );
+        assert_eq!(
+            sanitize_page_title_context("Transport Layer Security | MDN").as_deref(),
+            Some("Transport Layer Security")
+        );
+        assert_eq!(sanitize_page_title_context("Fluo"), None);
+        assert_eq!(sanitize_page_title_context("https://example.com/foo"), None);
+        assert_eq!(sanitize_page_title_context("   "), None);
+
+        let prompt_with_topic = format_single_prompt_ext_with_topic(
+            "Attention weights determine how strongly each token attends to context.",
+            "한국어",
+            "auto",
+            Some("Transformer (deep learning) - Wikipedia"),
+            &[],
+            &[],
+            false,
+        );
+        assert!(prompt_with_topic.contains("[Background Information]\nTopic: Transformer (deep learning)"));
+        assert!(prompt_with_topic.contains("considering the background information"));
+
+        let zh_prompt_topic = format_single_prompt_ext_with_topic(
+            "该模型在马尔可夫决策环境中不断优化策略网络的参数。",
+            "한국어",
+            "auto",
+            Some("强化学习 - 维基百科"),
+            &[],
+            &[],
+            false,
+        );
+        assert!(zh_prompt_topic.contains("[背景信息]\n主题：强化学习"));
+
+        let zh_redundant_topic = format_single_prompt_ext_with_topic(
+            "该模型在强化学习环境中不断优化策略网络的参数。",
+            "한국어",
+            "auto",
+            Some("强化学习 - 维基百科"),
+            &[],
+            &[],
+            false,
+        );
+        assert!(!zh_redundant_topic.contains("主题：强化学习"));
+
+        let dialogue_prompt = format_single_prompt_ext_with_topic(
+            "「本当にこれで助かったのか」",
+            "한국어",
+            "novel",
+            Some("羅生門 (小説) - Wikipedia"),
+            &[],
+            &[],
+            false,
+        );
+        assert!(!dialogue_prompt.contains("Topic:"));
+
+        assert_eq!(
+            clean_hy_mt2_output("Topic: Transformer (deep learning)\n어텐션 가중치가 결정된다."),
+            "어텐션 가중치가 결정된다."
+        );
+        assert!(looks_like_prompt_echo(
+            "Attention weights decide context.",
+            "Topic: Transformer"
+        ));
+
+        let logits = [0.0f32, 3.0f32, -2.0f32];
+        let lp_high = token_log_prob(&logits, llama_cpp_2::token::LlamaToken(1));
+        let lp_low = token_log_prob(&logits, llama_cpp_2::token::LlamaToken(2));
+        assert!(lp_high > -0.2 && lp_high < 0.0);
+        assert!(lp_low < lp_high - 4.0);
+        assert_eq!(token_log_prob(&logits, llama_cpp_2::token::LlamaToken(99)), 0.0);
+
+        let mut ok_tracker = ConfidenceTracker::new();
+        for _ in 0..12 {
+            ok_tracker.push(-0.08);
+        }
+        assert!(!ok_tracker.summary().is_low_confidence(80));
+
+        let mut bad_tracker = ConfidenceTracker::new();
+        for lp in [
+            -0.06, -0.07, -0.95, -1.05, -0.92, -0.88, -0.06, -0.08, -0.05, -0.07, -0.06, -0.08,
+        ] {
+            bad_tracker.push(lp);
+        }
+        assert!(bad_tracker.summary().is_low_confidence(80));
+
+        assert!(has_unexpected_script_glitch(
+            "Eukaryotes are organisms.",
+            "진핵생물은 진핵생물域이다.",
+            "Korean"
+        ));
+        assert!(has_unexpected_script_glitch(
+            "PostgreSQL supports stored procedures.",
+            "PostgreSQLはストOREDプロシージャに対応。",
+            "Japanese"
+        ));
+        assert!(!has_unexpected_script_glitch(
+            "PostgreSQL supports SQL and RDBMS features.",
+            "PostgreSQLはSQL準拠のリレーショナルデータベース（RDBMS）です。",
+            "Japanese"
+        ));
     }
 }

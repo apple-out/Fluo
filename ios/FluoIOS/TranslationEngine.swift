@@ -32,7 +32,7 @@ final class TranslationEngine {
 
     private func makeCacheKey(source: String, targetLanguage: String, style: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        return "v5|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
+        return "v6|\(targetLanguage.lowercased())|\(style.lowercased())|\(trimmed)"
     }
 
     func cachedTranslation(for source: String, targetLanguage: String, style: String) -> String? {
@@ -269,12 +269,25 @@ final class TranslationEngine {
         baseUrl: String,
         targetLanguage: String,
         style: String = "auto",
-        glossary: [GlossaryItem] = []
+        glossary: [GlossaryItem] = [],
+        pageTitle: String? = nil
     ) async throws -> String {
         if source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return source
         }
-        let glossaryHint = Self.matchingGlossaryHint(for: source, glossary: glossary)
+        let rawGlossaryHint = Self.matchingGlossaryHint(for: source, glossary: glossary)
+        let cleanTitle = (pageTitle ?? "")
+            .replacingOccurrences(of: "\t", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let glossaryHint: String
+        if cleanTitle.isEmpty {
+            glossaryHint = rawGlossaryHint
+        } else if rawGlossaryHint.isEmpty {
+            glossaryHint = "@page_title\t\(cleanTitle)"
+        } else {
+            glossaryHint = "@page_title\t\(cleanTitle)\n\(rawGlossaryHint)"
+        }
         let glossaryBlock = Self.cloudGlossaryBlock(for: source, glossary: glossary)
 
         switch provider {
