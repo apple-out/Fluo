@@ -729,6 +729,14 @@ const ko = {
   "onb.targetLabel": "기본 도착(번역) 언어",
   "onb.targetHint": "UI 언어를 고르면 기본 번역 언어도 함께 맞춰집니다. 원하면 직접 수정할 수 있습니다.",
   "onb.startBtn": "Fluo 시작하기",
+  "update.title": "새 업데이트가 있습니다",
+  "update.badge": "새 버전",
+  "update.versionRange": "현재 v{current} → 최신 v{latest}",
+  "update.notesLabel": "릴리즈 노트",
+  "update.download": "업데이트 다운로드",
+  "update.ignore": "무시",
+  "update.dontShowAgain": "앞으로 보지 않기",
+  "update.noNotes": "릴리즈 노트 내용이 없습니다.",
 } as const;
 
 export type I18nKey = keyof typeof ko;
@@ -1422,6 +1430,14 @@ const en: Dict = {
   "onb.targetLabel": "Default Target Translation Language",
   "onb.targetHint": "Selecting a UI language updates the default target language too — adjust freely if you read into another language.",
   "onb.startBtn": "Start Browsing with Fluo",
+  "update.title": "New Update Available",
+  "update.badge": "New Release",
+  "update.versionRange": "Current v{current} → Latest v{latest}",
+  "update.notesLabel": "Release Notes",
+  "update.download": "Download Update",
+  "update.ignore": "Ignore",
+  "update.dontShowAgain": "Don't Show Again",
+  "update.noNotes": "No release notes provided.",
 };
 
 const ja: Dict = {
@@ -2112,6 +2128,14 @@ const ja: Dict = {
   "onb.targetLabel": "既定の翻訳先言語",
   "onb.targetHint": "UI 言語を選ぶと翻訳先言語も連動します。別の言語へ翻訳したい場合は自由に入力・変更できます。",
   "onb.startBtn": "Fluo でブラウジングを始める",
+  "update.title": "新しいアップデートがあります",
+  "update.badge": "新バージョン",
+  "update.versionRange": "現在 v{current} → 最新 v{latest}",
+  "update.notesLabel": "リリースノート",
+  "update.download": "アップデートをダウンロード",
+  "update.ignore": "無視",
+  "update.dontShowAgain": "今後表示しない",
+  "update.noNotes": "リリースノートはありません。",
 };
 
 const zhCN: Dict = {
@@ -2802,6 +2826,14 @@ const zhCN: Dict = {
   "onb.targetLabel": "默认目标翻译语言",
   "onb.targetHint": "切换界面语言时会自动匹配推荐译文语言，您也可以随时自由修改。",
   "onb.startBtn": "开始使用 Fluo",
+  "update.title": "有可用新版本",
+  "update.badge": "新版本",
+  "update.versionRange": "当前 v{current} → 最新 v{latest}",
+  "update.notesLabel": "更新日志",
+  "update.download": "下载更新",
+  "update.ignore": "忽略",
+  "update.dontShowAgain": "不再提示",
+  "update.noNotes": "暂无更新日志。",
 };
 
 const dictionaries: Record<UiLanguage, Dict> = {

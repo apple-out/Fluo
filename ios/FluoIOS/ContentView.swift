@@ -509,6 +509,8 @@ struct ContentView: View {
             syncDraftFromActiveTab()
             if !store.onboardingCompleted {
                 showOnboarding = true
+            } else {
+                store.checkForAppUpdate()
             }
         }
         .onChange(of: store.activeTab.urlString) { _ in
@@ -528,6 +530,11 @@ struct ContentView: View {
         }
         .onChange(of: store.isPickingRegion) { picking in
             if picking { store.isDockCollapsed = false }
+        }
+        .onChange(of: store.onboardingCompleted) { completed in
+            if completed {
+                store.checkForAppUpdate()
+            }
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingSheet(store: store)
@@ -609,6 +616,11 @@ struct ContentView: View {
         .sheet(isPresented: $store.showSelectionResultSheet) {
             SelectionResultSheet(store: store)
                 .presentationDetents([.medium])
+                .liquidGlassSheet()
+        }
+        .sheet(isPresented: $store.showUpdatePopup) {
+            UpdateNoticeSheet(store: store)
+                .presentationDetents([.medium, .large])
                 .liquidGlassSheet()
         }
     }

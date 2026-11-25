@@ -25,8 +25,8 @@ use hy_mt2::{
     HardwareProfile, HyMt2Engine, HyMt2ModelState, ModelDownloadProgress, TranslationStreamEvent,
 };
 use model::{
-    AddressSuggestion, AppData, AppSettings, AutofillProfile, Bookmark, BrowserState,
-    ConnectionTest, ContextPair, CookieEntry, DownloadItem, ExternalImportSummary,
+    AddressSuggestion, AppData, AppSettings, AppUpdateInfo, AutofillProfile, Bookmark,
+    BrowserState, ConnectionTest, ContextPair, CookieEntry, DownloadItem, ExternalImportSummary,
     FeedbackConfigStatus, FeedbackReportInput, FeedbackSubmitResult, FindResult, GlossaryEntry,
     HistoryItem, ModelInfo, ProviderKind, SavedLogin, SearchHistoryItem, Secrets, SegmentInput,
     SegmentResult, SettingsView, SyncConfig, TranslationHistory, UserScriptItem, WebExtensionInfo,
@@ -35,6 +35,10 @@ use model::{
 pub const FEEDBACK_REPO_URL: &str = "https://github.com/apple-out/transratebrowser";
 const FEEDBACK_APP_TOKEN: &str = "transrate-browser-feedback";
 const BUILTIN_FEEDBACK_WEBHOOK_URL: Option<&str> = option_env!("TB_FEEDBACK_WEBHOOK_URL");
+const GITHUB_LATEST_RELEASE_API: &str =
+    "https://api.github.com/repos/apple-out/Fluo/releases/latest";
+const GITHUB_RELEASES_FALLBACK_URL: &str =
+    "https://github.com/apple-out/Fluo/releases/latest";
 
 pub struct AppState {
     pub data_dir: PathBuf,
@@ -56,6 +60,7 @@ pub struct AppState {
     pub hy_mt2: Arc<HyMt2Engine>,
     pub ad_block_enabled: Arc<AtomicBool>,
     pub diagnostics_log: Mutex<VecDeque<String>>,
+    pub latest_update_info: Mutex<Option<AppUpdateInfo>>,
 }
 
 pub fn push_diagnostic(state: &AppState, category: &str, message: &str) {
@@ -3239,6 +3244,111 @@ fn write_unique_download_file(
     Ok(path.to_string_lossy().into_owned())
 }
 
+fn parse_semver_tuple(raw: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = raw.trim().trim_start_matches(['v', 'V']);
+    let core = trimmed.split(['-', '+']).next()?.trim();
+    if core.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = core.split('.').collect();
+    if !(1..=3).contains(&parts.len()) {
+        return None;
+    }
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return None;
+    }
+    let major = parts[0].parse::<u64>().ok()?;
+    let minor = parts.get(1).copied().unwrap_or("0").parse::<u64>().ok()?;
+    let patch = parts.get(2).copied().unwrap_or("0").parse::<u64>().ok()?;
+    Some((major, minor, patch))
+}
+
+fn is_newer_version(current: &str, latest: &str) -> bool {
+    match (parse_semver_tuple(current), parse_semver_tuple(latest)) {
+        (Some(c), Some(l)) => l > c,
+        _ => false,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct GithubLatestRelease {
+    tag_name: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    published_at: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
+    #[serde(default)]
+    prerelease: Option<bool>,
+}
+
+#[tauri::command]
+async fn check_app_update(state: State<'_, AppState>) -> Result<AppUpdateInfo, String> {
+    let client = reqwest::Client::builder()
+        .user_agent(format!("Fluo/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client
+        .get(GITHUB_LATEST_RELEASE_API)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub update check HTTP {}", response.status()));
+    }
+    let payload: GithubLatestRelease = response.json().await.map_err(|error| error.to_string())?;
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let tag_name = payload.tag_name.trim().to_string();
+    let latest_version = tag_name.trim_start_matches(['v', 'V']).to_string();
+    let has_update = !payload.draft.unwrap_or(false)
+        && !payload.prerelease.unwrap_or(false)
+        && is_newer_version(&current_version, &latest_version);
+    let release_name = payload.name.unwrap_or_default().trim().to_string();
+    let release_notes: String = payload
+        .body
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(12_000)
+        .collect();
+    let release_url = payload
+        .html_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| u.starts_with("https://github.com/"))
+        .map(str::to_string)
+        .unwrap_or_else(|| GITHUB_RELEASES_FALLBACK_URL.to_string());
+    let published_at = payload.published_at.unwrap_or_default().trim().to_string();
+    let info = AppUpdateInfo {
+        current_version,
+        latest_version,
+        tag_name,
+        release_name,
+        release_notes,
+        release_url,
+        published_at,
+        has_update,
+    };
+    *lock(&state.latest_update_info) = Some(info.clone());
+    Ok(info)
+}
+
+#[tauri::command]
+fn get_cached_app_update(state: State<'_, AppState>) -> Option<AppUpdateInfo> {
+    lock(&state.latest_update_info).clone()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -3325,6 +3435,7 @@ pub fn run() {
                 hy_mt2: Arc::clone(&hy_mt2),
                 ad_block_enabled,
                 diagnostics_log: Mutex::new(diagnostics_init),
+                latest_update_info: Mutex::new(None),
             });
 
             // Auto-unload on-device Hy-MT2 model after configured idle timeout (default 60s).
@@ -3470,6 +3581,8 @@ pub fn run() {
             submit_feedback_report,
             open_feedback_url,
             save_feedback_report_file,
+            check_app_update,
+            get_cached_app_update,
             list_bookmarks,
             save_bookmark,
             delete_bookmark,
@@ -3542,9 +3655,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        FEEDBACK_REPO_URL, build_feedback_issue_content, home_url, sanitize_diagnostic_text,
-        starter_settings_for_hardware, validate_feedback_endpoint_url, validate_settings,
-        wait_for_request_interval,
+        FEEDBACK_REPO_URL, build_feedback_issue_content, home_url, is_newer_version,
+        parse_semver_tuple, sanitize_diagnostic_text, starter_settings_for_hardware,
+        validate_feedback_endpoint_url, validate_settings, wait_for_request_interval,
     };
     use crate::hy_mt2::HardwareProfile;
     use crate::model::{AppSettings, FeedbackReportInput, ProviderKind};
@@ -3776,6 +3889,24 @@ mod tests {
         )
         .expect("legacy AppSettings JSON without onboardingCompleted must deserialize");
         assert!(!parsed.onboarding_completed);
+        assert!(!parsed.update_notifications_disabled);
+        assert!(parsed.ignored_update_version.is_empty());
+    }
+
+    #[test]
+    fn semver_update_comparison_handles_v_prefixes_and_bounds() {
+        assert_eq!(parse_semver_tuple("v0.1.1"), Some((0, 1, 1)));
+        assert_eq!(parse_semver_tuple("V1.2"), Some((1, 2, 0)));
+        assert_eq!(parse_semver_tuple("0.1.1-beta.1"), Some((0, 1, 1)));
+        assert_eq!(parse_semver_tuple("invalid"), None);
+        assert_eq!(parse_semver_tuple("0.1."), None);
+
+        assert!(is_newer_version("0.1.0", "v0.1.1"));
+        assert!(!is_newer_version("0.1.1", "v0.1.1"));
+        assert!(!is_newer_version("0.1.1", "v0.1.0"));
+        assert!(is_newer_version("0.1.9", "0.1.10"));
+        assert!(is_newer_version("0.1.1", "v0.2.0"));
+        assert!(!is_newer_version("0.1.1", "invalid"));
     }
 
     #[test]

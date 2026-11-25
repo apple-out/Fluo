@@ -3,6 +3,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type {
   AddressSuggestion,
   AppSettings,
+  AppUpdateInfo,
   Article,
   AutofillProfile,
   Bookmark,
@@ -94,7 +95,8 @@ export const api = {
       | "feedback"
       | "rename-window"
       | "export-project"
-      | "onboarding",
+      | "onboarding"
+      | "update-notice",
     anchor?: OverlayAnchor | null,
     tabId?: string | null,
   ) => invoke<void>("open_overlay", { kind, anchor: anchor ?? null, tabId: tabId ?? null }),
@@ -441,6 +443,8 @@ export const api = {
 
   toggleAdblockSite: (url: string) => invoke<SettingsView>("toggle_adblock_site", { url }),
   allowPopupSite: (host: string) => invoke<SettingsView>("allow_popup_site", { host }),
+  checkAppUpdate: () => invoke<AppUpdateInfo>("check_app_update"),
+  getCachedAppUpdate: () => invoke<AppUpdateInfo | null>("get_cached_app_update"),
 };
 
 export function errorMessage(error: unknown): string {

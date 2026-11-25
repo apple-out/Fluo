@@ -149,10 +149,10 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             clean build
 
-      - name: Package Fluo-iOS-v0.1.0-unsigned.ipa
+      - name: Package Fluo-iOS-v0.1.1-unsigned.ipa
         working-directory: ios
         run: |
-          rm -rf Payload Fluo-iOS-v0.1.0-unsigned.ipa
+          rm -rf Payload Fluo-iOS-v0.1.1-unsigned.ipa
           mkdir -p Payload
           APP_PATH="$(find build/DerivedData -name "Fluo.app" -type d | head -n 1)"
           if [ -z "$APP_PATH" ]; then
@@ -160,12 +160,12 @@ jobs:
             exit 1
           fi
           cp -R "$APP_PATH" Payload/Fluo.app
-          zip -r -q Fluo-iOS-v0.1.0-unsigned.ipa Payload
-          ls -lh Fluo-iOS-v0.1.0-unsigned.ipa
+          zip -r -q Fluo-iOS-v0.1.1-unsigned.ipa Payload
+          ls -lh Fluo-iOS-v0.1.1-unsigned.ipa
 
       - name: Upload unsigned IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Fluo-iOS-v0.1.0-unsigned-ipa
-          path: ios/Fluo-iOS-v0.1.0-unsigned.ipa
+          name: Fluo-iOS-v0.1.1-unsigned-ipa
+          path: ios/Fluo-iOS-v0.1.1-unsigned.ipa
           retention-days: 30

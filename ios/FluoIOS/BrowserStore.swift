@@ -26,6 +26,16 @@ struct OmniboxSuggestion: Identifiable, Hashable {
     var tabId: UUID?
 }
 
+struct AppUpdateInfo: Identifiable, Equatable {
+    var id: String { tagName }
+    let currentVersion: String
+    let latestVersion: String
+    let tagName: String
+    let releaseName: String
+    let releaseNotes: String
+    let releaseURL: String
+}
+
 private final class FluoScriptMessageProxy: NSObject, WKScriptMessageHandler {
     weak var tab: BrowserTab?
     init(tab: BrowserTab) {
@@ -622,6 +632,11 @@ final class BrowserStore: ObservableObject {
     @Published var latestDownloadedFileURL: URL? = nil
     @Published var isDownloadingFile: Bool = false
 
+    // GitHub release update notice
+    @Published var availableUpdate: AppUpdateInfo? = nil
+    @Published var showUpdatePopup: Bool = false
+    private var hasCheckedForUpdate = false
+
     private var translationTask: Task<Void, Never>?
     private var regionPollTask: Task<Void, Never>?
     private var tabCancellables: [UUID: AnyCancellable] = [:]
@@ -938,6 +953,116 @@ final class BrowserStore: ObservableObject {
         let s = String(format: "%.2f", userData.fontScale)
         let l = String(format: "%.2f", userData.lineHeight)
         _ = activeTab.webView.evaluateJavaScript("window.__tbUpdateInlineStyle && window.__tbUpdateInlineStyle(\(s), \(l));", completionHandler: nil)
+    }
+
+    // MARK: - GitHub Release Update Checker
+
+    private struct GithubLatestReleasePayload: Decodable {
+        let tag_name: String
+        let name: String?
+        let body: String?
+        let html_url: String?
+        let draft: Bool?
+        let prerelease: Bool?
+    }
+
+    static func parseSemverTuple(_ raw: String) -> (Int, Int, Int)? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("v") || s.hasPrefix("V") {
+            s.removeFirst()
+        }
+        if let cut = s.firstIndex(where: { $0 == "-" || $0 == "+" }) {
+            s = String(s[..<cut])
+        }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        let parts = s.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...3).contains(parts.count) else { return nil }
+        var nums: [Int] = []
+        for part in parts {
+            guard !part.isEmpty,
+                  part.allSatisfy({ $0.isASCII && $0.isNumber }),
+                  let val = Int(part) else {
+                return nil
+            }
+            nums.append(val)
+        }
+        return (
+            nums[0],
+            nums.count > 1 ? nums[1] : 0,
+            nums.count > 2 ? nums[2] : 0
+        )
+    }
+
+    static func isNewerVersion(current: String, latest: String) -> Bool {
+        guard let c = parseSemverTuple(current),
+              let l = parseSemverTuple(latest) else {
+            return false
+        }
+        if l.0 != c.0 { return l.0 > c.0 }
+        if l.1 != c.1 { return l.1 > c.1 }
+        return l.2 > c.2
+    }
+
+    func checkForAppUpdate() {
+        guard !hasCheckedForUpdate, !userData.disableUpdatePopup, onboardingCompleted else { return }
+        hasCheckedForUpdate = true
+        let currentVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "0.1.1"
+        guard let apiURL = URL(string: "https://api.github.com/repos/apple-out/Fluo/releases/latest") else {
+            return
+        }
+
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard let self, !self.userData.disableUpdatePopup else { return }
+            var request = URLRequest(url: apiURL, timeoutInterval: 8)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            request.setValue("Fluo-iOS/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode) else {
+                    return
+                }
+                let payload = try JSONDecoder().decode(GithubLatestReleasePayload.self, from: data)
+                guard !(payload.draft ?? false), !(payload.prerelease ?? false) else { return }
+                let tag = payload.tag_name.trimmingCharacters(in: .whitespacesAndNewlines)
+                let latestVersion = (tag.hasPrefix("v") || tag.hasPrefix("V")) ? String(tag.dropFirst()) : tag
+                guard Self.isNewerVersion(current: currentVersion, latest: latestVersion) else { return }
+
+                let rawNotes = (payload.body ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let notes = rawNotes.count > 12_000 ? String(rawNotes.prefix(12_000)) : rawNotes
+                let candidateURL = (payload.html_url ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let releaseURL = candidateURL.hasPrefix("https://github.com/")
+                    ? candidateURL
+                    : "https://github.com/apple-out/Fluo/releases/latest"
+                let releaseName = (payload.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !self.userData.disableUpdatePopup else { return }
+                self.availableUpdate = AppUpdateInfo(
+                    currentVersion: currentVersion,
+                    latestVersion: latestVersion,
+                    tagName: tag,
+                    releaseName: releaseName,
+                    releaseNotes: notes,
+                    releaseURL: releaseURL
+                )
+                self.showUpdatePopup = true
+            } catch {
+                // Silent on offline or GitHub API rate-limit errors.
+            }
+        }
+    }
+
+    func dismissUpdatePopupForNow() {
+        showUpdatePopup = false
+    }
+
+    func disableUpdatePopupsForever() {
+        userData.disableUpdatePopup = true
+        persistUserData()
+        showUpdatePopup = false
     }
 
     // MARK: - Omnibox Suggestions & Calculator

@@ -12,6 +12,7 @@
   import SettingsPanel from "$lib/components/SettingsPanel.svelte";
   import TabBar from "$lib/components/TabBar.svelte";
   import TranslationHistoryPanel from "$lib/components/TranslationHistoryPanel.svelte";
+  import UpdateNoticeModal from "$lib/components/UpdateNoticeModal.svelte";
   import { api, errorMessage, type OverlayAnchor } from "$lib/api";
   import { getUiLang, setUiLang, t, UI_LANGUAGES } from "$lib/i18n.svelte";
   import { normalizeBookmarkUrl } from "$lib/browser-utils";
@@ -20,6 +21,7 @@
     emptyGlossaryEntry,
     type AddressSuggestion,
     type AppSettings,
+    type AppUpdateInfo,
     type Article,
     type Block,
     type Bookmark,
@@ -56,6 +58,7 @@
     | "rename-window"
     | "export-project"
     | "onboarding"
+    | "update-notice"
     | Exclude<InternalPageKind, "start">;
 
   type PopupBlockedNotice = {
@@ -129,6 +132,8 @@
   let workspaceBusy = $state(false);
   let renameWindowDraft = $state("");
   let onboardingTriggered = false;
+  let updateInfo = $state<AppUpdateInfo | null>(null);
+  let updateChecked = false;
   let exporting = $state(false);
 
   function workspaceLabel(ws: { id: string; name: string }): string {
@@ -2005,8 +2010,12 @@
       } catch {
         // Ignore storage errors.
       }
-      if (kind === "settings" || kind === "translate") {
+      if (kind === "settings" || kind === "translate" || kind === "update-notice") {
         applySettings(await api.loadSettings());
+      }
+      if (kind === "update-notice") {
+        const cached = await api.getCachedAppUpdate();
+        if (cached) updateInfo = cached;
       }
       if (kind === "translate") {
         void refreshOverlayHyMt2State();
@@ -2709,6 +2718,7 @@
     let unlistenOverlay: UnlistenFn | undefined;
     let unlistenPopupBlocked: UnlistenFn | undefined;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let updateCheckTimer: ReturnType<typeof setTimeout> | undefined;
     let readingPositionTimer: ReturnType<typeof setInterval> | undefined;
     let observer: ResizeObserver | undefined;
     const colorSchemeQuery =
@@ -2912,6 +2922,32 @@
         if (!view.settings.onboardingCompleted && !onboardingTriggered) {
           onboardingTriggered = true;
           void openOverlay("onboarding");
+        } else if (
+          !initialOverlay &&
+          !initialPage &&
+          view.settings.onboardingCompleted &&
+          !view.settings.updateNotificationsDisabled &&
+          !updateChecked
+        ) {
+          updateChecked = true;
+          updateCheckTimer = setTimeout(() => {
+            void api
+              .checkAppUpdate()
+              .then((info) => {
+                if (
+                  info.hasUpdate &&
+                  !settings.updateNotificationsDisabled &&
+                  info.latestVersion !== settings.ignoredUpdateVersion &&
+                  !overlayKind
+                ) {
+                  updateInfo = info;
+                  void openOverlay("update-notice");
+                }
+              })
+              .catch(() => {
+                // Silent on offline / rate-limit errors.
+              });
+          }, 2_500);
         }
       })
       .catch((cause) => notify("error", errorMessage(cause)));
@@ -3045,6 +3081,7 @@
       window.removeEventListener("keydown", onKeydown);
       window.removeEventListener("focus", onFocus);
       clearTimeout(resizeTimer);
+      clearTimeout(updateCheckTimer);
       clearTimeout(layoutAnimTimer);
       clearTimeout(layoutSettledTimer);
       clearInterval(readingPositionTimer);
@@ -5072,6 +5109,36 @@
           } else {
             void closeOverlay();
           }
+        }}
+      />
+    {:else if overlayKind === "update-notice"}
+      <UpdateNoticeModal
+        info={updateInfo}
+        ondownload={async () => {
+          const url = updateInfo?.releaseUrl?.trim();
+          if (url) {
+            try {
+              applyBrowser(await api.newTab(url));
+            } catch (cause) {
+              notify("error", errorMessage(cause));
+            }
+          }
+          await closeOverlay();
+        }}
+        onignore={async () => {
+          await closeOverlay();
+        }}
+        ondontshowagain={async () => {
+          try {
+            const updated = await api.saveSettings({
+              ...settings,
+              updateNotificationsDisabled: true,
+            });
+            onSettingsSaved(updated);
+          } catch (cause) {
+            notify("error", errorMessage(cause));
+          }
+          await closeOverlay();
         }}
       />
     {:else if overlayKind === "feedback"}

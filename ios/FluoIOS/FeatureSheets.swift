@@ -115,6 +115,110 @@ struct OnboardingSheet: View {
     }
 }
 
+struct UpdateNoticeSheet: View {
+    @ObservedObject var store: BrowserStore
+
+    private func t(_ key: String) -> String { L10n.tr(store.uiLang, key) }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LiquidAuroraBackground()
+
+                ScrollView {
+                    if let info = store.availableUpdate {
+                        VStack(alignment: .leading, spacing: 18) {
+                            HStack(spacing: 10) {
+                                Text(t("upd.badge"))
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .liquidGlassPill(tint: FluoThemeTokens.indigo)
+
+                                Text("v\(info.currentVersion) → v\(info.latestVersion)")
+                                    .font(.subheadline.monospacedDigit().weight(.bold))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if !info.releaseName.isEmpty {
+                                Text(info.releaseName)
+                                    .font(.title3.weight(.bold))
+                            }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(t("upd.notes"))
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.secondary)
+                                    .textCase(.uppercase)
+
+                                Text(info.releaseNotes.isEmpty ? t("upd.noNotes") : info.releaseNotes)
+                                    .font(.callout)
+                                    .foregroundStyle(.primary)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(16)
+                                    .liquidGlass(cornerRadius: 20)
+                            }
+
+                            Button {
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                store.newTab(urlString: info.releaseURL)
+                                store.dismissUpdatePopupForNow()
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Text(t("upd.download"))
+                                        .font(.headline.weight(.bold))
+                                    Image(systemName: "arrow.up.right.square")
+                                        .font(.subheadline.weight(.bold))
+                                }
+                                .foregroundStyle(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 15)
+                                .contentShape(Capsule())
+                            }
+                            .buttonStyle(LiquidPressButtonStyle())
+                            .liquidGlassPill(tint: FluoThemeTokens.indigo, interactive: true, prominent: true)
+
+                            HStack(spacing: 12) {
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    store.disableUpdatePopupsForever()
+                                } label: {
+                                    Text(t("upd.dontShowAgain"))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 13)
+                                        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                }
+                                .buttonStyle(LiquidPressButtonStyle())
+                                .liquidGlass(cornerRadius: 16, interactive: true)
+
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                    store.dismissUpdatePopupForNow()
+                                } label: {
+                                    Text(t("upd.ignore"))
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 13)
+                                        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                }
+                                .buttonStyle(LiquidPressButtonStyle())
+                                .liquidGlass(cornerRadius: 16, interactive: true)
+                            }
+                        }
+                        .padding(20)
+                    }
+                }
+            }
+            .navigationTitle(t("upd.title"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
 struct TranslateSheet: View {
     @ObservedObject var store: BrowserStore
     @ObservedObject var catalog: ModelCatalog

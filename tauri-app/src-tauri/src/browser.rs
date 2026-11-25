@@ -2742,7 +2742,8 @@ pub fn open_overlay(
         "menu" | "adblock" | "site-security" | "bookmark-edit" | "nav-history" | "translate"
         | "workspace" | "tab-menu" | "chrome-menu" | "page-menu" | "tab-search"
         | "task-manager" | "bookmarks" | "glossary" | "history" | "visits" | "downloads"
-        | "settings" | "feedback" | "rename-window" | "export-project" | "onboarding" => kind,
+        | "settings" | "feedback" | "rename-window" | "export-project" | "onboarding"
+        | "update-notice" => kind,
         _ => return Err("알 수 없는 브라우저 오버레이입니다.".into()),
     };
 

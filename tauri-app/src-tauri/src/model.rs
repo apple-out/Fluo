@@ -60,6 +60,23 @@ pub struct AppSettings {
     pub feedback_endpoint_url: String,
     #[serde(default)]
     pub onboarding_completed: bool,
+    #[serde(default)]
+    pub update_notifications_disabled: bool,
+    #[serde(default)]
+    pub ignored_update_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub tag_name: String,
+    pub release_name: String,
+    pub release_notes: String,
+    pub release_url: String,
+    pub published_at: String,
+    pub has_update: bool,
 }
 
 impl Default for AppSettings {
@@ -98,6 +115,8 @@ impl Default for AppSettings {
             hy_mt2_threads: 0,
             feedback_endpoint_url: String::new(),
             onboarding_completed: false,
+            update_notifications_disabled: false,
+            ignored_update_version: String::new(),
         }
     }
 }

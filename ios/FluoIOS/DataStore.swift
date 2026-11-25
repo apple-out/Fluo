@@ -188,6 +188,7 @@ struct FluoUserDataSnapshot: Codable {
     var autoTranslateEnabled: Bool = true
     var autoTranslateHosts: [String] = []
     var neverTranslateHosts: [String] = []
+    var disableUpdatePopup: Bool = false
 
     init() {}
 
@@ -228,6 +229,7 @@ struct FluoUserDataSnapshot: Codable {
         autoTranslateEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoTranslateEnabled) ?? true
         autoTranslateHosts = try c.decodeIfPresent([String].self, forKey: .autoTranslateHosts) ?? []
         neverTranslateHosts = try c.decodeIfPresent([String].self, forKey: .neverTranslateHosts) ?? []
+        disableUpdatePopup = try c.decodeIfPresent(Bool.self, forKey: .disableUpdatePopup) ?? false
     }
 
     func exportJSONString() -> String? {

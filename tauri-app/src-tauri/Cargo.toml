@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fluo — Browse in flow. Translate on-device."
 authors = ["apple-out"]
 license = "MIT"

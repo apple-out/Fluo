@@ -39,6 +39,19 @@ export interface AppSettings {
   hyMt2Threads: number;
   feedbackEndpointUrl?: string;
   onboardingCompleted: boolean;
+  updateNotificationsDisabled: boolean;
+  ignoredUpdateVersion: string;
+}
+
+export interface AppUpdateInfo {
+  currentVersion: string;
+  latestVersion: string;
+  tagName: string;
+  releaseName: string;
+  releaseNotes: string;
+  releaseUrl: string;
+  publishedAt: string;
+  hasUpdate: boolean;
 }
 
 export function defaultSettings(): AppSettings {
@@ -76,6 +89,8 @@ export function defaultSettings(): AppSettings {
     hyMt2Threads: 0,
     feedbackEndpointUrl: "",
     onboardingCompleted: false,
+    updateNotificationsDisabled: false,
+    ignoredUpdateVersion: "",
   };
 }
 
