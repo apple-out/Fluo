@@ -1262,7 +1262,7 @@ async fn run_translation_request(
     };
     let provider_key = match settings.provider {
         ProviderKind::GoogleGemini => settings.provider.as_str().to_string(),
-        ProviderKind::HyMt2 => "hy-mt2|v7".to_string(),
+        ProviderKind::HyMt2 => "hy-mt2|v8".to_string(),
         ProviderKind::CodexLegacy => format!(
             "{}|{}",
             settings.provider.as_str(),

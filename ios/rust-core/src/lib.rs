@@ -203,8 +203,82 @@ fn is_dialogue_line(line: &str, is_cjk: bool) -> bool {
     const OPEN_DIALOGUE_ONLY: [char; 5] = ['「', '“', '"', '〝', '（'];
     l.starts_with(OPEN_DIALOGUE_ONLY)
         || (is_cjk && l.starts_with('('))
-        || l.starts_with('—')
-        || l.starts_with('-')
+        || l.starts_with("— ")
+        || l.starts_with("― ")
+}
+
+fn split_list_bullet_prefix(line: &str) -> Option<(&str, &str)> {
+    let trimmed_start = line.trim_start();
+    let indent_len = line.len() - trimmed_start.len();
+    for bullet in ["- ", "* ", "• ", "· "] {
+        if let Some(body) = trimmed_start.strip_prefix(bullet) {
+            let body_trim = body.trim();
+            if !body_trim.is_empty()
+                && !body_trim
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+            {
+                let prefix_len = indent_len + bullet.len();
+                return Some((&line[..prefix_len], body_trim));
+            }
+        }
+    }
+    None
+}
+
+fn has_structured_multiline_entries(text: &str) -> bool {
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.len() < 2 {
+        return false;
+    }
+    let bullet_count = lines
+        .iter()
+        .filter(|l| split_list_bullet_prefix(l).is_some())
+        .count();
+    if bullet_count >= 2 {
+        return true;
+    }
+    if lines.len() <= 2 || text.chars().count() <= 160 {
+        return false;
+    }
+    let has_soft_wrap = lines.windows(2).any(|w| {
+        let prev = w[0];
+        let next = w[1];
+        let prev_is_heading = prev.chars().count() <= 36;
+        let prev_is_structured = prev.contains(';')
+            || prev.ends_with([
+                '.', '!', '?', ':', ';', '。', '！', '？', '」', '』', '”', '"', ')', ']',
+            ]);
+        let next_is_list = split_list_bullet_prefix(next).is_some();
+        let next_starts_mid_phrase = next
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_lowercase() || c.is_ascii_uppercase())
+            .unwrap_or(false);
+        !prev_is_heading && !prev_is_structured && !next_is_list && next_starts_mid_phrase
+    });
+    if has_soft_wrap {
+        return false;
+    }
+    let is_cjk = has_cjk_or_kana(text);
+    let structured_count = lines
+        .iter()
+        .filter(|l| {
+            is_dialogue_line(l, is_cjk)
+                || l.contains(';')
+                || l.ends_with([
+                    '.', '!', '?', ':', ';', '。', '！', '？', '」', '』', '”', '"',
+                ])
+                || l.chars().count() <= 36
+        })
+        .count();
+    structured_count * 2 >= lines.len()
 }
 
 fn has_mixed_dialogue_and_narration(text: &str) -> bool {
@@ -686,9 +760,7 @@ fn shortcut_translation(source_text: &str, norm_target: &str) -> Option<String> 
 }
 
 fn segment_needs_line_split(source_text: &str) -> bool {
-    let chars = source_text.chars().count();
-    let lines = source_text.lines().count();
-    (lines > 2 && chars > 160) || has_mixed_dialogue_and_narration(source_text)
+    has_structured_multiline_entries(source_text) || has_mixed_dialogue_and_narration(source_text)
 }
 
 fn is_western_abbreviation_before_dot(chars: &[(usize, char)], dot_idx: usize) -> bool {
@@ -1614,14 +1686,20 @@ fn is_literal_code_marker_inner(inner: &str) -> bool {
     }
     let lower = t.to_ascii_lowercase();
     t.contains('_')
+        || t.contains("::")
+        || t.starts_with("CVE-")
         || (t.starts_with('-')
             && t.chars()
                 .nth(1)
                 .map(|c| c.is_ascii_alphanumeric())
                 .unwrap_or(false))
-        || lower.ends_with(".exe")
-        || lower.ends_with(".dll")
-        || lower.ends_with(".cfg")
+        || [
+            ".exe", ".dll", ".cfg", ".rs", ".ts", ".tsx", ".js", ".jsx", ".py", ".go", ".cpp",
+            ".cc", ".c", ".h", ".hpp", ".json", ".toml", ".yaml", ".yml", ".md", ".sh", ".sql",
+            ".css", ".html", ".swift", ".kt", ".java", ".wasm", ".gguf", ".txt",
+        ]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 fn repair_inline_markers(source_text: &str, out: &mut String) {
@@ -1834,25 +1912,246 @@ fn has_korean_ss_batchim(c: char) -> bool {
     (code - 0xAC00) % 28 == 20
 }
 
+fn is_korean_sentence_boundary(after: &str) -> bool {
+    after.is_empty()
+        || after.starts_with([
+            '.', '!', '?', '…', ';', ':', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
+        ])
+}
+
+fn is_korean_hada_adjective_stem(prefix: &str) -> bool {
+    const HADA_ADJ_MULTI_STEMS: &[&str] = &[
+        "불가능",
+        "불충분",
+        "불안전",
+        "불안정",
+        "불완전",
+        "불가피",
+        "불분명",
+        "불확실",
+        "불적절",
+        "부적절",
+        "부적합",
+        "부정확",
+        "불편",
+        "불리",
+        "필요",
+        "가능",
+        "중요",
+        "강력",
+        "복잡",
+        "정확",
+        "단순",
+        "간단",
+        "명확",
+        "분명",
+        "명백",
+        "적절",
+        "적합",
+        "유효",
+        "무효",
+        "안전",
+        "안정",
+        "완벽",
+        "완전",
+        "충분",
+        "부족",
+        "유명",
+        "다양",
+        "동일",
+        "유사",
+        "비슷",
+        "독특",
+        "고유",
+        "특이",
+        "특별",
+        "투명",
+        "엄격",
+        "심각",
+        "위험",
+        "치명",
+        "유용",
+        "편리",
+        "훌륭",
+        "탁월",
+        "신속",
+        "원활",
+        "빈번",
+        "활발",
+        "풍부",
+        "유리",
+        "익숙",
+        "친숙",
+        "건강",
+        "신선",
+        "깨끗",
+        "조용",
+        "친절",
+        "민감",
+        "취약",
+        "견고",
+        "유연",
+        "뚜렷",
+        "정밀",
+        "미세",
+        "거대",
+        "방대",
+        "막대",
+        "철저",
+        "신중",
+        "과도",
+        "타당",
+        "정당",
+        "부당",
+        "상당",
+        "무관",
+        "유관",
+        "유한",
+        "무한",
+        "급격",
+        "극심",
+        "현저",
+        "미미",
+        "희박",
+        "순수",
+        "온화",
+        "완만",
+        "당연",
+        "필연",
+        "우연",
+        "공정",
+        "평등",
+        "확실",
+        "유력",
+        "긴급",
+        "중대",
+        "평범",
+        "비범",
+        "생생",
+        "밀접",
+        "긴밀",
+        "느슨",
+        "단단",
+        "튼튼",
+        "용이",
+        "난해",
+        "진지",
+        "성실",
+        "솔직",
+        "겸손",
+        "오만",
+        "교만",
+        "냉정",
+        "침착",
+        "치밀",
+        "영리",
+        "총명",
+        "현명",
+        "미묘",
+        "기묘",
+        "이상",
+        "희귀",
+        "진귀",
+        "귀중",
+        "소중",
+        "막중",
+        "다행",
+        "불행",
+        "행복",
+        "유익",
+        "무익",
+        "유해",
+        "무해",
+        "무난",
+        "미흡",
+        "비참",
+        "처참",
+        "곤란",
+        "불안",
+        "편안",
+        "유쾌",
+        "불쾌",
+        "대담",
+        "용감",
+        "과감",
+        "담대",
+        "능숙",
+        "미숙",
+        "노련",
+        "미안",
+        "죄송",
+        "안타",
+        "다정",
+        "친밀",
+        "긴박",
+        "위급",
+        "급박",
+        "간절",
+        "절실",
+        "선명",
+        "희미",
+        "은은",
+        "잔잔",
+        "고요",
+        "적막",
+        "막막",
+        "갑갑",
+        "답답",
+        "섭섭",
+        "서운",
+        "순진",
+        "완고",
+        "명쾌",
+        "상쾌",
+        "불길",
+        "심심",
+        "따뜻",
+        "서늘",
+        "시원",
+        "한산",
+        "번잡",
+        "생소",
+    ];
+    let trimmed = prefix.trim_end();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if HADA_ADJ_MULTI_STEMS
+        .iter()
+        .any(|stem| trimmed.ends_with(stem))
+    {
+        return true;
+    }
+    const HADA_ADJ_SINGLE_WORD_STEMS: &[&str] = &["강", "약", "흔", "귀", "진", "순", "뻔"];
+    HADA_ADJ_SINGLE_WORD_STEMS.iter().any(|stem| {
+        if let Some(before) = trimmed.strip_suffix(stem) {
+            before.is_empty()
+                || before
+                    .chars()
+                    .next_back()
+                    .map(|c| !('\u{AC00}'..='\u{D7A3}').contains(&c))
+                    .unwrap_or(true)
+        } else {
+            false
+        }
+    })
+}
+
 fn replace_korean_copula_imnida(text: &str) -> String {
+    const CLOSING_QUOTES: [char; 11] =
+        ['’', '”', '"', '\'', ')', '』', '」', '》', '】', '〉', '»'];
     let mut result = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(pos) = rest.find("입니다") {
         let prefix = &rest[..pos];
         let after = &rest[pos + "입니다".len()..];
-        let is_sentence_boundary = after.is_empty()
-            || after.starts_with([
-                '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
-            ]);
-        let trimmed_prefix = prefix.trim_end_matches(['’', '”', '"', '\'', ')', '』', '」']);
+        let is_sentence_boundary = is_korean_sentence_boundary(after);
+        let trimmed_prefix = prefix.trim_end_matches(CLOSING_QUOTES);
         let mut prev_char = trimmed_prefix.chars().last();
         if prev_char == Some(']') {
             if let Some(inner_start) = trimmed_prefix.rfind('|') {
                 let inner = trimmed_prefix[inner_start + 1..].trim_end_matches(']');
-                prev_char = inner
-                    .trim_end_matches(['’', '”', '"', '\'', ')', '』', '」'])
-                    .chars()
-                    .last();
+                prev_char = inner.trim_end_matches(CLOSING_QUOTES).chars().last();
             }
         }
         result.push_str(prefix);
@@ -1892,71 +2191,63 @@ fn replace_korean_copula_imnida(text: &str) -> String {
 }
 
 fn normalize_korean_narration_endings(out: &mut String) {
+    // 1. Explicit irregular/adjective formal -> plain endings
     for (formal, plain) in [
         ("있지 않습니다", "있지 않다"),
-        ("되지 않습니다", "되지 않는다"),
-        ("하지 않습니다", "하지 않는다"),
         ("그렇지 않습니다", "그렇지 않다"),
         ("많지 않습니다", "많지 않다"),
         ("좋지 않습니다", "좋지 않다"),
+        ("높지 않습니다", "높지 않다"),
+        ("크지 않습니다", "크지 않다"),
+        ("작지 않습니다", "작지 않다"),
+        ("곳이죠", "곳이다"),
+        ("뿐이죠", "뿐이다"),
+        ("거죠", "거다"),
+        ("거예요", "거다"),
         ("아닙니다", "아니다"),
+        ("힘듭니다", "힘들다"),
+        ("올바릅니다", "올바르다"),
+        ("남다릅니다", "남다르다"),
+        ("다릅니다", "다르다"),
+        ("빠릅니다", "빠르다"),
+        ("푸릅니다", "푸르다"),
+        ("게으릅니다", "게으르다"),
+        ("고릅니다", "고르다"),
+        ("큽니다", "크다"),
+        ("나쁩니다", "나쁘다"),
+        ("바쁩니다", "바쁘다"),
+        ("기쁩니다", "기쁘다"),
+        ("슬픕니다", "슬프다"),
+        ("아픕니다", "아프다"),
+        ("예쁩니다", "예쁘다"),
+        ("고픕니다", "고프다"),
+        ("비쌉니다", "비싸다"),
+        ("값쌉니다", "값싸다"),
+        ("짭니다", "짜다"),
+        ("깁니다", "길다"),
+        ("멉니다", "멀다"),
+        ("거칩니다", "거칠다"),
+        ("드뭅니다", "드물다"),
+        ("가늡니다", "가늘다"),
+        ("둥굽니다", "둥글다"),
+        ("서툽니다", "서툴다"),
         ("있습니다", "있다"),
         ("없습니다", "없다"),
         ("같습니다", "같다"),
-        ("다릅니다", "다르다"),
         ("많습니다", "많다"),
         ("적습니다", "적다"),
-        ("큽니다", "크다"),
         ("작습니다", "작다"),
         ("높습니다", "높다"),
         ("낮습니다", "낮다"),
         ("좋습니다", "좋다"),
         ("나쁩니다", "나쁘다"),
-        ("보입니다", "보인다"),
-        ("들립니다", "들린다"),
-        ("느껴집니다", "느껴진다"),
-        ("생각됩니다", "생각된다"),
-        ("생각합니다", "생각한다"),
-        ("시작됩니다", "시작된다"),
-        ("시작합니다", "시작한다"),
-        ("사용합니다", "사용한다"),
-        ("포함합니다", "포함한다"),
-        ("나타냅니다", "나타낸다"),
-        ("설명합니다", "설명한다"),
-        ("제공합니다", "제공한다"),
-        ("지원합니다", "지원한다"),
-        ("필요합니다", "필요하다"),
-        ("가능합니다", "가능하다"),
-        ("중요합니다", "중요하다"),
-        ("존재합니다", "존재한다"),
-        ("등장합니다", "등장한다"),
-        ("발생합니다", "발생한다"),
-        ("유명합니다", "유명하다"),
-        ("말합니다", "말한다"),
-        ("마칩니다", "마친다"),
-        ("끝납니다", "끝난다"),
-        ("놀랍니다", "놀란다"),
-        ("바랍니다", "바란다"),
-        ("만납니다", "만난다"),
-        ("다룹니다", "다룬다"),
-        ("따릅니다", "따른다"),
-        ("부릅니다", "부른다"),
-        ("누립니다", "누린다"),
-        ("이룹니다", "이룬다"),
-        ("보여줍니다", "보여준다"),
-        ("알려줍니다", "알려준다"),
-        ("도와줍니다", "도와준다"),
-        ("바꿔줍니다", "바꿔준다"),
-        ("해줍니다", "해준다"),
-        ("줍니다", "준다"),
+        ("그렇습니다", "그렇다"),
+        ("이렇습니다", "이렇다"),
+        ("저렇습니다", "저렇다"),
+        ("어떻습니다", "어떻다"),
         ("됩니다", "된다"),
-        ("합니다", "한다"),
-        ("갑니다", "간다"),
-        ("옵니다", "온다"),
-        ("봅니다", "본다"),
-        ("만듭니다", "만든다"),
     ] {
-        for punct in [".", "!", "…", ";", ",", ")", "”", "’"] {
+        for punct in [".", "!", "…", ";", ":", ",", ")", "”", "’"] {
             let pat = format!("{formal}{punct}");
             if out.contains(&pat) {
                 let rep = format!("{plain}{punct}");
@@ -1970,18 +2261,80 @@ fn normalize_korean_narration_endings(out: &mut String) {
         }
     }
 
+    // 2. Context-aware `~하지 않습니다` -> `~하지 않다` (adj) vs `~하지 않는다` (verb)
+    if out.contains("하지 않습니다") {
+        let mut fixed = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(pos) = rest.find("하지 않습니다") {
+            let prefix = &rest[..pos];
+            let after = &rest[pos + "하지 않습니다".len()..];
+            fixed.push_str(prefix);
+            if is_korean_sentence_boundary(after) {
+                if is_korean_hada_adjective_stem(prefix) {
+                    fixed.push_str("하지 않다");
+                } else {
+                    fixed.push_str("하지 않는다");
+                }
+            } else {
+                fixed.push_str("하지 않습니다");
+            }
+            rest = after;
+        }
+        fixed.push_str(rest);
+        *out = fixed;
+    }
+
+    // 3. Remaining `~지 않습니다` (되지 않습니다 등)
+    if out.contains("지 않습니다") {
+        let mut fixed = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(pos) = rest.find("지 않습니다") {
+            let prefix = &rest[..pos];
+            let after = &rest[pos + "지 않습니다".len()..];
+            fixed.push_str(prefix);
+            if is_korean_sentence_boundary(after) {
+                fixed.push_str("지 않는다");
+            } else {
+                fixed.push_str("지 않습니다");
+            }
+            rest = after;
+        }
+        fixed.push_str(rest);
+        *out = fixed;
+    }
+
+    // 4. Context-aware `<stem>합니다` -> `<stem>하다` (adjective) vs `<stem>한다` (verb)
+    if out.contains("합니다") {
+        let mut fixed = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(pos) = rest.find("합니다") {
+            let prefix = &rest[..pos];
+            let after = &rest[pos + "합니다".len()..];
+            fixed.push_str(prefix);
+            if is_korean_sentence_boundary(after) {
+                if is_korean_hada_adjective_stem(prefix) {
+                    fixed.push_str("하다");
+                } else {
+                    fixed.push_str("한다");
+                }
+            } else {
+                fixed.push_str("합니다");
+            }
+            rest = after;
+        }
+        fixed.push_str(rest);
+        *out = fixed;
+    }
+
+    // 5. General Unicode Hangul past/future `ㅆ` batchim + `습니다` -> `<syllable>다`
     if out.contains("습니다") {
         let mut fixed = String::with_capacity(out.len());
         let mut rest = out.as_str();
         while let Some(pos) = rest.find("습니다") {
             let prefix = &rest[..pos];
             let after = &rest[pos + "습니다".len()..];
-            let boundary = after.is_empty()
-                || after.starts_with([
-                    '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
-                ]);
             fixed.push_str(prefix);
-            if boundary
+            if is_korean_sentence_boundary(after)
                 && prefix
                     .chars()
                     .last()
@@ -1998,31 +2351,44 @@ fn normalize_korean_narration_endings(out: &mut String) {
         *out = fixed;
     }
 
+    // 6. General copula `<noun>입니다` -> `<noun>이다` / `<noun>다`
     if out.contains("입니다") {
         *out = replace_korean_copula_imnida(out);
     }
-    if out.contains("됩니다") {
+
+    // 7. General Unicode Hangul `<syllable with ㅂ batchim>니다` -> `<syllable with ㄴ batchim>다`
+    if out.contains("니다") {
         let mut fixed = String::with_capacity(out.len());
         let mut rest = out.as_str();
-        while let Some(pos) = rest.find("됩니다") {
+        while let Some(pos) = rest.find("니다") {
             let prefix = &rest[..pos];
-            let after = &rest[pos + "됩니다".len()..];
-            let boundary = after.is_empty()
-                || after.starts_with([
-                    '.', '!', '?', '…', ';', ',', ')', '(', '”', '’', '"', '\'', ' ', '\n',
-                ]);
-            fixed.push_str(prefix);
-            if boundary {
-                fixed.push_str("된다");
-            } else {
-                fixed.push_str("됩니다");
+            let after = &rest[pos + "니다".len()..];
+            if is_korean_sentence_boundary(after) {
+                if let Some(last_ch) = prefix.chars().last() {
+                    let code = last_ch as u32;
+                    if last_ch != '습'
+                        && (0xAC00..=0xD7A3).contains(&code)
+                        && (code - 0xAC00) % 28 == 17
+                    {
+                        let prefix_without_last = &prefix[..prefix.len() - last_ch.len_utf8()];
+                        let replaced_syllable = char::from_u32(code - 17 + 4).unwrap_or(last_ch);
+                        fixed.push_str(prefix_without_last);
+                        fixed.push(replaced_syllable);
+                        fixed.push('다');
+                        rest = after;
+                        continue;
+                    }
+                }
             }
+            fixed.push_str(prefix);
+            fixed.push_str("니다");
             rest = after;
         }
         fixed.push_str(rest);
         *out = fixed;
     }
 
+    // 8. Fix common Korean adjective `-ㄴ다` conjugation errors (`필요한다` -> `필요하다`)
     for (bad_adj, good_adj) in [
         ("필요한다", "필요하다"),
         ("중요한다", "중요하다"),
@@ -2032,6 +2398,7 @@ fn normalize_korean_narration_endings(out: &mut String) {
         ("다양한다", "다양하다"),
         ("동일한다", "동일하다"),
         ("유사한다", "유사하다"),
+        ("적합한다", "적합하다"),
         ("간단한다", "간단하다"),
         ("복잡한다", "복잡하다"),
         ("정확한다", "정확하다"),
@@ -2039,7 +2406,9 @@ fn normalize_korean_narration_endings(out: &mut String) {
         ("완벽한다", "완벽하다"),
         ("충분한다", "충분하다"),
         ("부족한다", "부족하다"),
-        ("적합한다", "적합하다"),
+        ("투명한다", "투명하다"),
+        ("특별한다", "특별하다"),
+        ("유용한다", "유용하다"),
         ("필요하지 않는다", "필요하지 않다"),
         ("가능하지 않는다", "가능하지 않다"),
         ("충분하지 않는다", "충분하지 않다"),
@@ -2049,7 +2418,25 @@ fn normalize_korean_narration_endings(out: &mut String) {
         }
     }
 
+    // 9. Safe sentence-ending polite `~해요 / ~어요 / ~아요 / ~이야` normalization in non-dialogue prose
     if !out.contains('“') && !out.contains('‘') {
+        if out.contains("해요.") {
+            let mut fixed = String::with_capacity(out.len());
+            let mut rest = out.as_str();
+            while let Some(pos) = rest.find("해요.") {
+                let prefix = &rest[..pos];
+                let after = &rest[pos + "해요.".len()..];
+                fixed.push_str(prefix);
+                if is_korean_hada_adjective_stem(prefix) {
+                    fixed.push_str("하다.");
+                } else {
+                    fixed.push_str("한다.");
+                }
+                rest = after;
+            }
+            fixed.push_str(rest);
+            *out = fixed;
+        }
         for (non_plain, plain) in [
             ("했어요.", "했다."),
             ("됐어요.", "됐다."),
@@ -2058,10 +2445,29 @@ fn normalize_korean_narration_endings(out: &mut String) {
             ("났어요.", "났다."),
             ("졌어요.", "졌다."),
             ("렸어요.", "렸다."),
+            ("있어요.", "있다."),
+            ("없어요.", "없다."),
+            ("같아요.", "같다."),
+            ("많아요.", "많다."),
+            ("적어요.", "적다."),
+            ("좋아요.", "좋다."),
+            ("작아요.", "작다."),
+            ("높아요.", "높다."),
+            ("낮아요.", "낮다."),
+            ("넓어요.", "넓다."),
+            ("좁아요.", "좁다."),
+            ("길어요.", "길다."),
+            ("짧아요.", "짧다."),
+            ("돼요.", "된다."),
+            ("봐요.", "본다."),
+            ("와요.", "온다."),
+            ("가요.", "간다."),
             ("이에요.", "이다."),
             ("예요.", "다."),
             ("네요.", "다."),
             ("군요.", "다."),
+            ("이야.", "이다."),
+            ("거야.", "거다."),
         ] {
             if out.contains(non_plain) {
                 *out = out.replace(non_plain, plain);
@@ -2172,6 +2578,188 @@ fn strip_spurious_question_mark(source_text: &str, out: &mut String) {
     }
 }
 
+fn strip_ipa_pronunciation_brackets(text: &str) -> String {
+    if !text.contains('[') {
+        return text.to_string();
+    }
+    const IPA_MARKERS: &[char] = &[
+        'ʁ', 'ɛ', 'ʃ', 'ʒ', 'ɑ', 'ɔ', 'ø', 'œ', 'ɥ', 'ɲ', 'ŋ', 'ɪ', 'ʊ', 'ʌ', 'ə', 'θ', 'ð', 'ː',
+        'ˈ', 'ˌ', 'ɡ', 'ʔ', 'ɾ', 'ç', 'ʝ', 'β', 'ɣ', 'χ', 'ħ', 'ʕ',
+    ];
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('[') {
+        if rest[open..].starts_with("[[") {
+            out.push_str(&rest[..open + 2]);
+            rest = &rest[open + 2..];
+            continue;
+        }
+        let after = &rest[open + 1..];
+        if let Some(close) = after.find(']') {
+            let inner = &after[..close];
+            let has_ipa = !inner.is_empty()
+                && inner.chars().count() <= 40
+                && !inner.contains('|')
+                && inner.chars().any(|c| IPA_MARKERS.contains(&c));
+            if has_ipa {
+                out.push_str(rest[..open].trim_end_matches(' '));
+                let tail = &after[close + 1..];
+                if !out.is_empty()
+                    && !out.ends_with(char::is_whitespace)
+                    && !tail.is_empty()
+                    && !tail.starts_with(char::is_whitespace)
+                    && !tail.starts_with([',', '.', ';', ':', ')', '!', '?'])
+                {
+                    out.push(' ');
+                }
+                rest = tail;
+                continue;
+            }
+        }
+        out.push_str(&rest[..open + 1]);
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+fn unwrap_soft_wrapped_prose(text: &str) -> String {
+    if !text.contains('\n') || has_structured_multiline_entries(text) || is_dialogue_segment(text) {
+        return text.to_string();
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.len() < 2 {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for (idx, raw_line) in lines.iter().enumerate() {
+        let trimmed = raw_line.trim();
+        if idx == 0 {
+            out.push_str(trimmed);
+            continue;
+        }
+        let prev = out.trim_end();
+        let prev_is_all_caps_heading = !prev.is_empty()
+            && prev.chars().count() <= 40
+            && prev.chars().any(|c| c.is_ascii_alphabetic())
+            && !prev.chars().any(|c| c.is_ascii_lowercase());
+        let prev_is_single_token = !prev.contains(' ') && prev.chars().count() < 24;
+        let prev_ends_sentence = prev.ends_with([
+            '.', '!', '?', ':', ';', '。', '！', '？', '”', '’', '」', '』', ')', ']',
+        ]);
+        let next_starts_continuation = trimmed
+            .chars()
+            .next()
+            .map(|c| !matches!(c, '-' | '*' | '•' | '·' | '[' | '「' | '『'))
+            .unwrap_or(false);
+        let prev_was_prose = prev.contains(' ')
+            && !prev_is_all_caps_heading
+            && !prev_is_single_token
+            && !prev_ends_sentence;
+        if prev_was_prose && next_starts_continuation && !trimmed.is_empty() {
+            out.push(' ');
+            out.push_str(trimmed);
+        } else {
+            out.push('\n');
+            out.push_str(trimmed);
+        }
+    }
+    out
+}
+
+fn preprocess_source_text(source_text: &str, norm_target: &str) -> String {
+    let mut s = source_text
+        .replace('\u{00A0}', " ")
+        .replace('\u{202F}', " ");
+    while s.contains(", )") {
+        s = s.replace(", )", ")");
+    }
+    if s.contains(" , )") {
+        s = s.replace(" , )", ")");
+    }
+    if !s.contains('\n') {
+        if let Some((_, body)) = split_list_bullet_prefix(&s) {
+            s = body.to_string();
+        }
+    }
+    s = strip_ipa_pronunciation_brackets(&s);
+    s = unwrap_soft_wrapped_prose(&s);
+
+    if norm_target != "Japanese" {
+        s = s
+            .replace("人気が少ない", "人の気配が少ない")
+            .replace("人気がない", "人の気配がない")
+            .replace("文書をご注意ください", "文書をご参照ください");
+    }
+
+    s
+}
+
+fn fix_english_billion_to_korean(source_text: &str, out: &mut String) {
+    let lower = source_text.to_ascii_lowercase();
+    if !lower.contains("billion") || !out.contains('억') {
+        return;
+    }
+    let mut scan = lower.as_str();
+    while let Some(pos) = scan.find("billion") {
+        let before = scan[..pos].trim_end();
+        let num_start = before
+            .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let num_str = before[num_start..].trim();
+        if !num_str.is_empty() && num_str.chars().any(|c| c.is_ascii_digit()) {
+            if let Ok(val) = num_str.parse::<f64>() {
+                let eok_val = val * 10.0;
+                let formatted_eok = if (eok_val - eok_val.round()).abs() < 1e-6 {
+                    format!("{}", eok_val.round() as i64)
+                } else {
+                    let s = format!("{eok_val:.2}");
+                    s.trim_end_matches('0').trim_end_matches('.').to_string()
+                };
+                let wrong_with_space = format!("{num_str} 억");
+                let wrong_tight = format!("{num_str}억");
+                let right_tight = format!("{formatted_eok}억");
+                if out.contains(&wrong_with_space) {
+                    *out = out.replace(&wrong_with_space, &right_tight);
+                }
+                if out.contains(&wrong_tight) {
+                    *out = out.replace(&wrong_tight, &right_tight);
+                }
+            }
+        }
+        scan = &scan[pos + "billion".len()..];
+    }
+}
+
+fn fix_korean_code_token_particles(out: &mut String) {
+    const VOWEL_SUFFIXES: &[&str] = &[
+        ".cpp", ".rs", ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".md", ".sh", ".css", ".txt",
+        ".java", ".swift", ".kt", ".exe", ".wasm", "er]]", "or]]",
+    ];
+    for suffix in VOWEL_SUFFIXES {
+        for (bad_p, good_p) in [("은", "는"), ("이", "가"), ("을", "를"), ("과", "와")] {
+            let pat = format!("{suffix}{bad_p}");
+            let mut search_from = 0usize;
+            while let Some(rel) = out[search_from..].find(&pat) {
+                let abs = search_from + rel;
+                let after = &out[abs + pat.len()..];
+                let ok_boundary = after.is_empty()
+                    || after.starts_with(|c: char| {
+                        c.is_whitespace() || matches!(c, ',' | '.' | '!' | '?' | ';' | ':')
+                    });
+                if ok_boundary {
+                    let p_start = abs + suffix.len();
+                    out.replace_range(p_start..abs + pat.len(), good_p);
+                    search_from = p_start + good_p.len();
+                } else {
+                    search_from = abs + pat.len();
+                }
+            }
+        }
+    }
+}
+
 fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> String {
     let cleaned = clean_translation_output(raw);
     if cleaned.is_empty() {
@@ -2204,6 +2792,18 @@ fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> 
         }
 
         let src_lower = source_text.to_ascii_lowercase();
+        fix_english_billion_to_korean(source_text, &mut out);
+        if (src_lower.contains("weights") || src_lower.contains("weight"))
+            && !src_lower.contains("wells")
+            && (src_lower.contains("model")
+                || src_lower.contains("gguf")
+                || src_lower.contains("quantiz")
+                || src_lower.contains("neural")
+                || src_lower.contains("llm"))
+            && out.contains("웰스")
+        {
+            out = out.replace("웰스", "가중치");
+        }
         if src_lower.contains("inference")
             && (src_lower.contains("llm")
                 || src_lower.contains("mllm")
@@ -2238,6 +2838,7 @@ fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> 
             out = fix_korean_particle_after_term(&out, "오만과 편견");
         }
 
+        fix_korean_code_token_particles(&mut out);
         strip_spurious_question_mark(source_text, &mut out);
         let is_dlg = is_dialogue_segment(source_text);
         if is_dlg {
@@ -2249,7 +2850,21 @@ fn finalize_translated_unit(source_text: &str, norm_target: &str, raw: &str) -> 
         }
     }
 
-    out.trim().to_string()
+    let mut result = out.trim().to_string();
+    if !source_text.contains('\n') {
+        if let Some((bullet, _)) = split_list_bullet_prefix(source_text) {
+            let trimmed_out = result.trim_start();
+            if !trimmed_out.is_empty()
+                && !trimmed_out.starts_with('-')
+                && !trimmed_out.starts_with('*')
+                && !trimmed_out.starts_with('•')
+                && !trimmed_out.starts_with('·')
+            {
+                result = format!("{bullet}{trimmed_out}");
+            }
+        }
+    }
+    result
 }
 
 fn looks_like_prompt_echo(source_text: &str, out: &str) -> bool {
@@ -2462,7 +3077,8 @@ fn translate_single_unit(
     if let Some(gloss_shortcut) = glossary_exact_segment_shortcut(source, &seg_rules) {
         return Ok(gloss_shortcut);
     }
-    let prompt_src = apply_ios_glossary_pre_substitute(source, &seg_rules);
+    let preprocessed = preprocess_source_text(source, norm_target);
+    let prompt_src = apply_ios_glossary_pre_substitute(&preprocessed, &seg_rules);
 
     let first = run_completion_once(
         loaded,
@@ -2491,7 +3107,8 @@ fn translate_single_unit(
             let plain_trimmed = plain.trim();
             if !plain_trimmed.is_empty() && plain_trimmed != source.trim() {
                 let plain_rules = filter_ios_glossary(plain_trimmed, all_rules);
-                let plain_prompt = apply_ios_glossary_pre_substitute(plain_trimmed, &plain_rules);
+                let plain_pre = preprocess_source_text(plain_trimmed, norm_target);
+                let plain_prompt = apply_ios_glossary_pre_substitute(&plain_pre, &plain_rules);
                 if let Ok(plain_tr) = run_completion_once(
                     loaded,
                     plain_trimmed,
